@@ -1,4 +1,4 @@
-## 🍞 BREAD: Balanced Reinforcement & Expanded Aggregated Diversification
+## 🍞 BREAD: Balanced Reinforcement & Aggregated Diversification
 
 *A lightweight, plug-and-play framework for robust Automatic Prompt Optimization and migration-ready Continual Prompt Optimization.*
 
