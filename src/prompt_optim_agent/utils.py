@@ -10,14 +10,15 @@ logging.getLogger("datasets").setLevel(logging.CRITICAL)
 
 
 def parse_model_args(kwargs):
-    base_args = dict()
-    optim_args = dict()
-    for k in kwargs:
-        if k.startswith("base_"):
-            base_args[k.replace("base_", "")] = kwargs[k]
-        elif k.startswith("optim_"):
-            optim_args[k.replace("optim_", "")] = kwargs[k]
-    if (base_args["api_key"] is not None) and (optim_args["api_key"] is None):
+    base_args = {}
+    optim_args = {}
+    for key, value in kwargs.items():
+        if key.startswith("base_"):
+            base_args[key.removeprefix("base_")] = value
+        elif key.startswith("optim_"):
+            optim_args[key.removeprefix("optim_")] = value
+
+    if base_args["api_key"] is not None and optim_args["api_key"] is None:
         optim_args["api_key"] = base_args["api_key"]
 
     return base_args, optim_args
@@ -30,25 +31,21 @@ def get_pacific_time():
 def create_logger(
     logging_dir: str, name: str, log_mode: str = "train"
 ) -> logging.Logger:
-    """
-    Create a logger that writes to a log file and stdout.
-    """
-    if not os.path.exists(logging_dir):
-        os.makedirs(logging_dir)
-    if log_mode == "train":
-        name += "-train"
-    else:
-        name += "-test"
-    logging_dir = os.path.join(logging_dir, name)
-    num = len(glob(logging_dir + "*"))
+    """Create a file-only logger. Console output is handled by BreadConsole."""
+    os.makedirs(logging_dir, exist_ok=True)
 
-    logging_dir += "-" + f"{num:03d}" + ".log"
+    name = f"{name}-{log_mode}"
+    log_path = os.path.join(logging_dir, name)
+    num = len(glob(f"{log_path}*"))
+    log_path = f"{log_path}-{num:03d}.log"
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        handlers=[logging.StreamHandler(), logging.FileHandler(f"{logging_dir}")],
-    )
-    logger = logging.getLogger("prompt optimization agent")
+    logger = logging.getLogger(f"bread.{name}.{num}")
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+
+    handler = logging.FileHandler(log_path)
+    handler.setLevel(logging.INFO)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(handler)
+
     return logger
