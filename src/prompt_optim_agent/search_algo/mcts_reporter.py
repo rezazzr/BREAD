@@ -8,10 +8,10 @@ keep the search logic focused.
 import json
 import logging
 import os
-from typing import List
 
 import numpy as np
 
+from ..console import get_console
 from ..tracking import MetricsTracker
 from .base_algo import OptimNode
 from .mcts_tree_node import MCTSNode
@@ -43,8 +43,9 @@ class MCTSReporter:
         self.log_dir = log_dir
 
     def eval_and_log_node(
-        self, node: MCTSNode, eval=False, log_metric=False, eval_type="test"
+        self, node: MCTSNode, evaluate=False, log_metric=False, eval_type="test"
     ):
+        console = get_console()
         parent_info = (
             f"parent: {node.parent.id}" if node.parent is not None else "parent: N/A"
         )
@@ -58,22 +59,29 @@ class MCTSReporter:
         )
         self.logger.info(f"   prompt: {node.prompt}")
 
-        if eval:
+        if evaluate:
             if eval_type == "test":
                 test_metric, eval_output = self.world_model.test_prompt(node.prompt)
             else:
                 raise ValueError(f"eval_type {eval_type} is not supported.")
             node.test_metric = test_metric
         if log_metric:
-            if not isinstance(node.test_metric, tuple):
-                self.logger.info(f"   {eval_type} metric: {node.test_metric:.4f}")
-            else:
+            if isinstance(node.test_metric, tuple):
                 self.logger.info(f"   {eval_type} metric: {node.test_metric}")
+            else:
+                self.logger.info(f"   {eval_type} metric: {node.test_metric:.4f}")
+            console.node_info(
+                node_id=node.id,
+                depth=node.depth,
+                reward=node.reward,
+                q=node.Q,
+                uct=self.uct_fn(node),
+                test_metric=node.test_metric,
+            )
         self.logger.info("---------------------")
-        if eval:
+        if evaluate:
             return eval_output["correct"]
-        else:
-            return None
+        return None
 
     def log_vars(self, vars_dict: dict):
         self.logger.info("-------------------- MCTS -----------------------")
@@ -83,23 +91,19 @@ class MCTSReporter:
                 self.logger.info(f"{var_name} : {var_value}")
         self.logger.info("-------------------------------------------")
 
-    def log_path(self, path, eval=False, log_metric=False):
-        for node in path:
-            self.eval_and_log_node(node=node, eval=eval, log_metric=log_metric)
-
-    def log_nodes(self, nodes, eval=False, log_metric=False, eval_type="test"):
+    def log_nodes(self, nodes, evaluate=False, log_metric=False, eval_type="test"):
         for node in nodes:
             self.eval_and_log_node(
-                node, eval=eval, log_metric=log_metric, eval_type=eval_type
+                node, evaluate=evaluate, log_metric=log_metric, eval_type=eval_type
             )
         self.logger.info("\n")
 
-    def log_paths(self, paths, eval=False, log_metric=False, eval_type="test"):
+    def log_paths(self, paths, evaluate=False, log_metric=False, eval_type="test"):
         for i, path in enumerate(paths):
             self.logger.info(f"\n----------------  path {i} ------------------")
             for node in path:
                 self.eval_and_log_node(
-                    node, eval=eval, log_metric=log_metric, eval_type=eval_type
+                    node, evaluate=evaluate, log_metric=log_metric, eval_type=eval_type
                 )
 
     def prepare_output(
@@ -110,6 +114,8 @@ class MCTSReporter:
         k: int,
     ) -> dict:
         """Prepare output: evaluate test nodes, log paths, and track metrics."""
+        console = get_console()
+
         self.logger.info(
             "\n---------------------  all iteration paths ------------------------"
         )
@@ -117,63 +123,29 @@ class MCTSReporter:
         self.logger.info("\n---------------------  all nodes ------------------------")
         self.log_nodes(nodes)
 
-        # Build path statistics
-        paths_nodes = []
-        paths_qs = []
-        paths_rewards = []
-        paths_ucts = []
+        paths_nodes, paths_qs, paths_rewards = self._gather_path_stats(
+            trace_in_each_iter, nodes, console
+        )
 
-        for i, path in enumerate(trace_in_each_iter):
-            path_nodes = []
-            path_ids = []
-            path_qs = []
-            path_rewards = []
-            path_ucts = []
-
-            for node_p in path:
-                node = nodes[node_p.id]
-                path_ids.append(node.id)
-                uct = self.uct_fn(node)
-                node.uct = uct
-                path_ucts.append(uct)
-                path_nodes.append(node)
-                path_qs.append(node.Q)
-                path_rewards.append(node.reward)
-
-            paths_nodes.append(path_nodes)
-            paths_qs.append(path_qs)
-            paths_rewards.append(path_rewards)
-            paths_ucts.append(path_ucts)
-
-            self.logger.info(f"path {i}: {path_ids} ")
-            self.logger.info(
-                f"mean values:   path_uct: {np.mean(path_ucts):.4f} | "
-                f"path_q: {np.mean(path_qs):.4f} | path_reward: {np.mean(path_rewards):.4f}"
-            )
-            self.logger.info(f"path_ucts:  {path_ucts}")
-            self.logger.info(f"paths_qs :  {paths_qs}")
-            self.logger.info(f"path_reward : {path_rewards}")
-            self.logger.info("---------------------------")
-
-        qs_rank = np.argsort([np.mean(row) for row in paths_qs])[::-1].tolist()
-        rewards_rank = np.argsort([np.mean(row) for row in paths_rewards])[::-1].tolist()
-
-        best_q_path = paths_nodes[qs_rank[0]]
-        best_reward_path = paths_nodes[rewards_rank[0]]
+        best_q_path = paths_nodes[
+            np.argmax([np.mean(row) for row in paths_qs])
+        ]
+        best_reward_path = paths_nodes[
+            np.argmax([np.mean(row) for row in paths_rewards])
+        ]
         top_k_reward_nodes = sorted(
-            nodes, key=lambda node: node.reward, reverse=True
+            nodes, key=lambda n: n.reward, reverse=True
         )[:k]
 
         if len(self.world_model.test_dataloader) != 0:
+            console.phase("TEST", "evaluating best nodes on test set...")
             self._evaluate_test_nodes(
                 nodes, best_q_path, best_reward_path, top_k_reward_nodes
             )
 
-        selected_node = sorted(
-            best_reward_path,
-            key=lambda node: self._sort_helper(node.reward),
-            reverse=True,
-        )[0]
+        selected_node = max(
+            best_reward_path, key=lambda n: self._sort_helper(n.reward)
+        )
         last_node_of_best_reward_path = best_reward_path[-1]
 
         self._track_metrics(
@@ -181,6 +153,22 @@ class MCTSReporter:
             best_q_path, best_reward_path, selected_node,
             last_node_of_best_reward_path,
         )
+
+        # Console: detailed selected node summary
+        console.selected_node_detail(
+            node_id=selected_node.id,
+            depth=selected_node.depth,
+            reward=selected_node.reward,
+            test_metric=getattr(selected_node, "test_metric", None),
+            prompt=selected_node.prompt,
+        )
+        if last_node_of_best_reward_path.id != selected_node.id:
+            console.test_result(
+                "last node of best path test",
+                last_node_of_best_reward_path.test_metric,
+            )
+
+        self._generate_plots(console, nodes, paths_nodes, selected_node.id)
 
         return dict(
             all_paths=paths_nodes,
@@ -192,11 +180,70 @@ class MCTSReporter:
             best_reward_path_selected_node=[selected_node],
         )
 
+    def _gather_path_stats(self, trace_in_each_iter, nodes, console):
+        """Resolve traced paths against final node state and log per-path statistics."""
+        paths_nodes = []
+        paths_qs = []
+        paths_rewards = []
+
+        for i, path in enumerate(trace_in_each_iter):
+            path_nodes = []
+            path_ids = []
+            path_qs = []
+            path_rewards = []
+
+            for node_p in path:
+                node = nodes[node_p.id]
+                node.uct = self.uct_fn(node)
+                path_ids.append(node.id)
+                path_nodes.append(node)
+                path_qs.append(node.Q)
+                path_rewards.append(node.reward)
+
+            paths_nodes.append(path_nodes)
+            paths_qs.append(path_qs)
+            paths_rewards.append(path_rewards)
+
+            path_ucts = [n.uct for n in path_nodes]
+            self.logger.info(f"path {i}: {path_ids} ")
+            self.logger.info(
+                f"mean values:   path_uct: {np.mean(path_ucts):.4f} | "
+                f"path_q: {np.mean(path_qs):.4f} | path_reward: {np.mean(path_rewards):.4f}"
+            )
+            self.logger.info(f"path_ucts:  {path_ucts}")
+            self.logger.info(f"paths_qs :  {paths_qs}")
+            self.logger.info(f"path_reward : {path_rewards}")
+            self.logger.info("---------------------------")
+
+            console.path_table(i, path_ids, float(np.mean(path_rewards)), float(np.mean(path_qs)))
+
+        return paths_nodes, paths_qs, paths_rewards
+
+    def _generate_plots(self, console, nodes, paths_nodes, selected_node_id: int = -1):
+        """Build plot data dicts and send to the console for final visualization."""
+        node_dicts = [
+            {
+                "id": n.id,
+                "parent": n.parent.id if n.parent is not None else -1,
+                "depth": n.depth,
+                "reward": n.reward,
+                "q": n.Q,
+                "uct": getattr(n, "uct", 0),
+                "test_metric": getattr(n, "test_metric", None),
+            }
+            for n in nodes
+        ]
+        path_dicts = [
+            [{"id": n.id, "depth": n.depth, "reward": n.reward} for n in path]
+            for path in paths_nodes
+        ]
+        console.generate_final_plots(node_dicts, path_dicts, self.log_dir, selected_node_id=selected_node_id)
+
     def _evaluate_test_nodes(
         self, nodes, best_q_path, best_reward_path, top_k_reward_nodes
     ):
         """Evaluate selected nodes on test set and log detailed metrics."""
-        self.logger.info("\n----------------  test nodes ------------------")
+        self.logger.info("\n----------------  test_nodes ------------------")
         test_nodes_set = set(best_q_path + best_reward_path + top_k_reward_nodes)
         detailed_metrics_columns = []
         detailed_metrics_values = []
@@ -210,7 +257,7 @@ class MCTSReporter:
             if node in test_nodes_set:
                 correct_results = np.array(
                     self.eval_and_log_node(
-                        node, eval=True, log_metric=True, eval_type="test"
+                        node, evaluate=True, log_metric=True, eval_type="test"
                     )
                 )
                 if len(correct_results.shape) == 2:
@@ -224,13 +271,13 @@ class MCTSReporter:
                 data=detailed_metrics_values,
             )
 
-        self.logger.info("\n----------------  top_k_reward_nodes------------------")
+        self.logger.info("\n----------------  top_k_reward_nodes ------------------")
         for node in top_k_reward_nodes:
-            self.eval_and_log_node(node, eval=False, log_metric=True, eval_type="test")
+            self.eval_and_log_node(node, log_metric=True, eval_type="test")
 
-        self.logger.info("\n----------------  best_reward_path------------------")
+        self.logger.info("\n----------------  best_reward_path ------------------")
         for node in best_reward_path:
-            self.eval_and_log_node(node, eval=False, log_metric=True, eval_type="test")
+            self.eval_and_log_node(node, log_metric=True, eval_type="test")
 
     def _track_metrics(
         self, trace_in_each_iter, nodes, optim_nodes,
@@ -243,78 +290,83 @@ class MCTSReporter:
             "last_node_test_accuracy", last_node_of_best_reward_path.test_metric
         )
 
-        # Path data table
-        path_data_as_list = []
-        path_data_columns = ["path_id"] + list(nodes[0].to_dict().keys())
+        self._track_paths_table(trace_in_each_iter, nodes)
+        self._track_nodes_table(nodes, best_q_path, best_reward_path, selected_node)
+        self._track_optim_nodes_table(optim_nodes)
+
+    def _track_paths_table(self, trace_in_each_iter, nodes):
+        """Log the per-path node data table to the tracker."""
+        columns = ["path_id"] + list(nodes[0].to_dict().keys())
+        rows = []
         for i, path in enumerate(trace_in_each_iter):
             for node in path:
-                node_dict = node.to_dict()
-                if node_dict["parent"] == -1:
-                    node_dict["parent"] = None
-                path_data_as_list.append([i] + list(node_dict.values()))
-        self.tracker.log_table("paths", columns=path_data_columns, data=path_data_as_list)
+                row = self._node_dict_to_row(node)
+                rows.append([i] + row)
+        self.tracker.log_table("paths", columns=columns, data=rows)
 
-        # Nodes table with best-path annotations
-        data_nodes_as_list = []
-        data_nodes_columns = [
-            key if key != "id" else "node_id" for key in nodes[0].to_dict().keys()
+    def _track_nodes_table(self, nodes, best_q_path, best_reward_path, selected_node):
+        """Log the annotated nodes table and tree visualization to the tracker."""
+        columns = [
+            "node_id" if key == "id" else key for key in nodes[0].to_dict().keys()
         ]
-        data_nodes_columns.extend(["best_q_path", "best_reward_path", "selected_node"])
-        best_reward_path_ids = {node.id for node in best_reward_path}
-        best_q_path_ids = {node.id for node in best_q_path}
+        columns.extend(["best_q_path", "best_reward_path", "selected_node"])
+
+        best_q_ids = {n.id for n in best_q_path}
+        best_reward_ids = {n.id for n in best_reward_path}
+        rows = []
         for node in nodes:
-            node_dict = node.to_dict()
-            if node_dict["parent"] == -1:
-                node_dict["parent"] = None
-            data_nodes_as_list.append(
-                list(node_dict.values())
-                + [
-                    node.id in best_q_path_ids,
-                    node.id in best_reward_path_ids,
-                    node.id == selected_node.id,
-                ]
-            )
-        node_table = self.tracker.create_table(
-            columns=data_nodes_columns, data=data_nodes_as_list
-        )
-        tree_fields = {"node-id": "node_id", "node-parent": "parent"}
+            row = self._node_dict_to_row(node)
+            row.extend([
+                node.id in best_q_ids,
+                node.id in best_reward_ids,
+                node.id == selected_node.id,
+            ])
+            rows.append(row)
+
+        node_table = self.tracker.create_table(columns=columns, data=rows)
         self.tracker.log_plot_table(
             "nodes",
             vega_spec_name="rezazzr/tree_visualizer",
             data_table=node_table,
-            fields=tree_fields,
+            fields={"node-id": "node_id", "node-parent": "parent"},
         )
 
-        # Optim nodes tree
-        data_optim_nodes_as_list = []
-        data_optim_nodes_columns = list(optim_nodes[0].to_dict().keys())
+    def _track_optim_nodes_table(self, optim_nodes):
+        """Log the optimization nodes tree visualization to the tracker."""
+        columns = list(optim_nodes[0].to_dict().keys())
+        rows = []
         for optim_node in optim_nodes:
             node_dict = optim_node.to_dict()
             if node_dict["parent"] == -1:
                 node_dict["parent"] = None
-            data_optim_nodes_as_list.append(list(node_dict.values()))
+            rows.append(list(node_dict.values()))
 
-        optim_node_table = self.tracker.create_table(
-            columns=data_optim_nodes_columns, data=data_optim_nodes_as_list
-        )
+        optim_table = self.tracker.create_table(columns=columns, data=rows)
         self.tracker.log_plot_table(
             "optim_nodes",
             vega_spec_name="tree_optim_visualizer",
-            data_table=optim_node_table,
+            data_table=optim_table,
             fields={"node-id": "node_id", "node-parent": "parent"},
         )
+
+    @staticmethod
+    def _node_dict_to_row(node: MCTSNode) -> list:
+        """Convert an MCTSNode to a tracker-ready row, normalizing parent=-1 to None."""
+        node_dict = node.to_dict()
+        if node_dict["parent"] == -1:
+            node_dict["parent"] = None
+        return list(node_dict.values())
 
     def save_to_json(self, mcts_output: dict):
         """Save MCTS output to a JSON file."""
         data_to_save = {}
-        paths = []
-        for path in mcts_output["all_paths"]:
-            paths.append([node.to_dict() for node in path])
-        data_to_save["all_paths"] = paths
-
-        for key in mcts_output:
-            if key != "all_paths":
-                data_to_save[key] = [node.to_dict() for node in mcts_output[key]]
+        for key, value in mcts_output.items():
+            if key == "all_paths":
+                data_to_save[key] = [
+                    [node.to_dict() for node in path] for path in value
+                ]
+            else:
+                data_to_save[key] = [node.to_dict() for node in value]
         with open(os.path.join(self.log_dir, "data.json"), "w") as f:
             json.dump(data_to_save, f, indent=4)
 
@@ -325,7 +377,7 @@ class MCTSReporter:
         return metric
 
     @staticmethod
-    def _record_counts(array: np.ndarray) -> List[int]:
+    def _record_counts(array: np.ndarray) -> list[int]:
         counts_list = []
         for col in range(array.shape[1]):
             counts = {1: 0, 0: 0, -1: 0}
