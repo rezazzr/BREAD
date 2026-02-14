@@ -1,3 +1,4 @@
+from .debug_model import DebugModel
 from .openai_model import OpenAIModel
 
 # To register a new model backend:
@@ -6,6 +7,7 @@ from .openai_model import OpenAIModel
 # 3. Add an entry to LANGUAGE_MODELS below
 LANGUAGE_MODELS = {
     "openai": OpenAIModel,
+    "debug": DebugModel,
 }
 
 # Load any local-only backends (e.g. _local_backends.py, which is gitignored)
@@ -16,7 +18,7 @@ except ImportError:
     pass
 
 
-def get_language_model(language_model_name):
+def get_language_model(language_model_name: str) -> type:
     if language_model_name not in LANGUAGE_MODELS:
         raise ValueError(
             f"Language model type '{language_model_name}' is not supported. "
