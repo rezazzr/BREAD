@@ -1,18 +1,17 @@
-from typing import Generic, List, Tuple
+from typing import List, Tuple
 
 import numpy as np
-import wandb
 from tqdm import tqdm
 
 from prompt_optim_agent.language_model.base_model import BaseLanguageModel
+from prompt_optim_agent.tracking import MetricsTracker
 from tasks.base_task import BaseTask
 
-from ..search_algo.base_algo import Action, State
 from ..search_algo.mcts_tree_node import MCTSNode
-from .gradient_descent import *
+from .gradient_descent import GradientDescent
 
 
-class WorldModel(Generic[State, Action]):
+class WorldModel:
     def __init__(
         self,
         task: BaseTask,
@@ -25,6 +24,7 @@ class WorldModel(Generic[State, Action]):
         test_batch_size: int = 1,
         eval_batch_size: int = 1,
         print_log: bool = True,
+        tracker: MetricsTracker = None,
         **kwargs,
     ) -> None:
         """
@@ -39,6 +39,7 @@ class WorldModel(Generic[State, Action]):
         self.base_model = base_model
         self.optim_model = optim_model
         self.num_new_prompts = num_new_prompts
+        self.tracker = tracker or MetricsTracker()
         self.positive_reinforcement_depth = kwargs.get(
             "positive_reinforcement_depth", 0
         )
@@ -74,18 +75,18 @@ class WorldModel(Generic[State, Action]):
             print_log=print_log,
             positive_reinforcement_depth=self.positive_reinforcement_depth,
             gradient_sampling=gradient_sampling,
+            tracker=self.tracker,
         )
 
         self.log_vars()
 
     def log_vars(self):
-        """
-        Log world_model arguments.
-        """
+        """Log world_model arguments."""
         self.logger.info("----------------- World Model --------------------------")
         ignored_print_vars = [
             "task",
             "logger",
+            "tracker",
             "train_dataloader",
             "train_data_iterator",
             "test_dataloader",
@@ -100,9 +101,7 @@ class WorldModel(Generic[State, Action]):
             self.logger.info(f"{var_name} : {var_value}")
 
     def _infinite_data_loader(self, data_loader):
-        """
-        Yield batches from dataloader.
-        """
+        """Yield batches from dataloader indefinitely."""
         while True:
             for batch in data_loader:
                 yield batch
@@ -111,9 +110,7 @@ class WorldModel(Generic[State, Action]):
         return next(self.train_data_iterator)
 
     def _get_trajectory_prompts(self, node: MCTSNode):
-        """
-        Collect the trajectory of prompts from the root node to the given node.
-        """
+        """Collect the trajectory of prompts from the root node to the given node."""
         trajectory_prompts = []
         temp_node = node
         trajectory_prompts.append(temp_node.prompt)
@@ -123,9 +120,7 @@ class WorldModel(Generic[State, Action]):
         return trajectory_prompts[::-1]
 
     def build_root(self, init_prompt):
-        """
-        Build root MCTSNode using the initial prompt
-        """
+        """Build root MCTSNode using the initial prompt."""
         node = MCTSNode(prompt=init_prompt, action=None, parent=None)
         node.reward = self._reward_type_helper(
             self.evaluate_prompt(prompt=node.prompt)["metric"]
@@ -133,10 +128,7 @@ class WorldModel(Generic[State, Action]):
         return node
 
     def step(self, node: MCTSNode, batch):
-        """
-        Optimization step:
-            Generate new nodes based on the given node and batch of data.
-        """
+        """Generate new nodes based on the given node and batch of data."""
         new_nodes, gradient_descent_output = self._gradient_descent_step(
             node=node, batch=batch
         )
@@ -151,7 +143,7 @@ class WorldModel(Generic[State, Action]):
         gradient_descent_output = self.gradient_descent(
             batch, node.prompt, helper_data, node.depth
         )
-        wandb.log(
+        self.tracker.log(
             {
                 "node_id": node.id,
                 "depth": node.depth,
@@ -171,16 +163,12 @@ class WorldModel(Generic[State, Action]):
         return new_nodes, gradient_descent_output
 
     def evaluate_child_node(self, node: MCTSNode):
-        """
-        Evaluate the given node on eval_dataloader to calculate the reward.
-        """
-        evaludate_output = self.evaluate_prompt(prompt=node.prompt)
-        node.reward = self._reward_type_helper(evaludate_output["metric"])
+        """Evaluate the given node on eval_dataloader to calculate the reward."""
+        evaluate_output = self.evaluate_prompt(prompt=node.prompt)
+        node.reward = self._reward_type_helper(evaluate_output["metric"])
 
     def evaluate_prompt(self, prompt):
-        """
-        Evaluate prompt on eval_dataloader to calculate the reward.
-        """
+        """Evaluate prompt on eval_dataloader to calculate the reward."""
         self.logger.info(f"prompt: {prompt}")
         metric, eval_output = self.eval_instruction_with_loader(
             task=self.task,
@@ -191,13 +179,11 @@ class WorldModel(Generic[State, Action]):
         correct = eval_output["correct"]
         correct_np = np.array(correct)
         acc = correct_np[correct_np > -1].mean()
-        evaludate_output = dict(metric=metric, correct=correct, acc=acc)
-        return evaludate_output
+        evaluate_output = dict(metric=metric, correct=correct, acc=acc)
+        return evaluate_output
 
     def test_prompt(self, prompt):
-        """
-        Test prompt on test_dataloader.
-        """
+        """Test prompt on test_dataloader."""
         metric, eval_output = self.eval_instruction_with_loader(
             task=self.task,
             eval_prompt=prompt,
@@ -216,9 +202,9 @@ class WorldModel(Generic[State, Action]):
     ):
         """
         Evaluate eval_prompt on the given dataloader.
-        Output:
+        Returns:
             metric: task specific evaluation metric, e.g. Accuracy
-            eval_output: the input question and predictions for each example in the dataloader
+            eval_output: the input question and predictions for each example
         """
         build_forward_prompts_func = task.build_forward_prompts_completion
         batch_forward_func = self.base_model.batch_forward_func
@@ -233,12 +219,11 @@ class WorldModel(Generic[State, Action]):
         pbar = tqdm(dataloader, leave=False)
         for batch in pbar:
             batch_prompts = build_forward_prompts_func(batch["question"], eval_prompt)
-            responses, loging_dict = batch_forward_func(batch_prompts)
-            wandb.log(
-                {f"{key}_base_model": value for key, value in loging_dict.items()}
+            responses, logging_dict = batch_forward_func(batch_prompts)
+            self.tracker.log(
+                {f"{key}_base_model": value for key, value in logging_dict.items()}
             )
             preds = task.batch_clean_responses(responses)
-            # check to see if this particular task comes with answers
             batch_answers = batch.get("answer", None)
             labels = (
                 task.clean_labels(batch_answers) if batch_answers is not None else None
@@ -270,5 +255,4 @@ class WorldModel(Generic[State, Action]):
         if isinstance(metric, tuple):
             return metric[0]
         else:
-            return metric
             return metric

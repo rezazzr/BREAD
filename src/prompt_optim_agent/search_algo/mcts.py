@@ -1,23 +1,22 @@
 # The MCTS algorithm code is adapted from Reasoning with Language Model is Planning with World Model
 # https://github.com/Ber666/llm-reasoners
 
-import json
 import logging
 import os
 from copy import deepcopy
-from typing import Generic, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 
-import wandb
-
+from ..tracking import MetricsTracker
 from ..utils import create_logger
 from ..world_model.world_model import WorldModel
-from .base_algo import Action, OptimNode, SearchAlgo, State
+from .base_algo import OptimNode, SearchAlgo
+from .mcts_reporter import MCTSReporter
 from .mcts_tree_node import MCTSNode
 
 
-class MCTS(SearchAlgo, Generic[State, Action]):
+class MCTS(SearchAlgo):
 
     def __init__(
         self,
@@ -33,6 +32,7 @@ class MCTS(SearchAlgo, Generic[State, Action]):
         log=True,
         logger: Optional[logging.Logger] = None,
         log_dir=None,
+        tracker: MetricsTracker = None,
         **kwargs,
     ) -> None:
         """
@@ -46,10 +46,12 @@ class MCTS(SearchAlgo, Generic[State, Action]):
         :param iteration_num: number of MCTS iterations
         :param logger: logger
         :param log_dir: logger directory to save the results
+        :param tracker: experiment metrics tracker
         """
 
         self.task = task
         self.world_model = world_model
+        self.tracker = tracker or MetricsTracker()
 
         self.expand_width = expand_width
         self.depth_limit = depth_limit
@@ -74,13 +76,21 @@ class MCTS(SearchAlgo, Generic[State, Action]):
         self.trace_in_each_iter: list[list[MCTSNode]] = []
         self.root: Optional[MCTSNode] = None
         self.nodes: list[MCTSNode] = []
-        self.optim_nodes = []
-        self.optim_nodes_ids_only = []
+        self.optim_nodes: list[OptimNode] = []
+        self.optim_nodes_ids_only: list[int] = []
         self.base_optim_node_id = -1
         self.num_gradient_accumulation = kwargs.get("num_gradient_accumulation", 1)
         self.log = log
 
-        self.log_vars()
+        self.reporter = MCTSReporter(
+            logger=self.logger,
+            tracker=self.tracker,
+            world_model=self.world_model,
+            task=self.task,
+            uct_fn=self._uct,
+            log_dir=self.log_dir,
+        )
+        self.reporter.log_vars(vars(self))
 
     def get_optim_id(self) -> int:
         self.base_optim_node_id -= 1
@@ -92,9 +102,6 @@ class MCTS(SearchAlgo, Generic[State, Action]):
     def increase_threshold(self, threshold):
         if threshold > self.mcts_threshold:
             self.mcts_threshold = threshold
-
-    def cal_cum_reward(self, rewards):
-        return np.sum(rewards)
 
     def _is_terminal_with_depth_limit(self, node: MCTSNode):
         return node.depth >= self.depth_limit
@@ -145,8 +152,8 @@ class MCTS(SearchAlgo, Generic[State, Action]):
             node = self._uct_select(node)
             if self.log:
                 self.logger.info(
-                    f"Select node {node.id}: depth {node.depth}, \
-                                 reward: {node.reward:.4f} utc: {self._uct(node=node)}"
+                    f"Select node {node.id}: depth {node.depth}, "
+                    f"reward: {node.reward:.4f} utc: {self._uct(node=node)}"
                 )
 
     def _expand(self, node: MCTSNode):
@@ -166,7 +173,6 @@ class MCTS(SearchAlgo, Generic[State, Action]):
                 f"Expanding: node: {node.id}, depth {node.depth}, reward: {node.reward:.4f}"
             )
 
-        i = 0
         node.expand_times += 1
         if node.id not in self.optim_nodes_ids_only:
             self.optim_nodes.append(
@@ -180,8 +186,9 @@ class MCTS(SearchAlgo, Generic[State, Action]):
                 )
             )
             self.optim_nodes_ids_only.append(node.id)
-        while i < self.expand_width:
-            batch = self.world_model.get_train_batch()  # sample batch data
+
+        for _ in range(self.expand_width):
+            batch = self.world_model.get_train_batch()
             children, gradient_descent_output = self.world_model.step(node, batch)
             optim_node_id = self.get_optim_id()
             self.optim_nodes.append(
@@ -210,16 +217,8 @@ class MCTS(SearchAlgo, Generic[State, Action]):
                 [child.id for child in children] + [optim_node_id]
             )
 
-            # optim step: sample new child nodes using one batch
-
-            i += 1
-            for (
-                child_node
-            ) in (
-                children
-            ):  # There could be multiple children in one optim step (num_new_prompts>1)
+            for child_node in children:
                 self.world_model.evaluate_child_node(node=child_node)
-                child_node.reward = child_node.cal_reward()
                 child_node.is_terminal = self.is_terminal_node(child_node)
 
             self.nodes.extend(children)
@@ -228,7 +227,7 @@ class MCTS(SearchAlgo, Generic[State, Action]):
         if self.log:
             for child in node.children:
                 self.logger.info(
-                    f"child_node {child.id} (reward:{child.reward:.4f}, reward: {child.reward:.4f})"
+                    f"child_node {child.id} (reward:{child.reward:.4f})"
                 )
 
     def _simulate(self, path: list[MCTSNode]):
@@ -246,8 +245,8 @@ class MCTS(SearchAlgo, Generic[State, Action]):
                 self.increase_threshold(node.reward)
                 if self.log:
                     self.logger.info(
-                        f"Early Stop: node {node.id}, reward: {node.reward}. \
-                    MCTS threshold increases to {self.mcts_threshold}. Stop simulating.\n"
+                        f"Early Stop: node {node.id}, reward: {node.reward}. "
+                        f"MCTS threshold increases to {self.mcts_threshold}. Stop simulating.\n"
                     )
                 return
 
@@ -307,7 +306,6 @@ class MCTS(SearchAlgo, Generic[State, Action]):
     def search(self, init_state: str):
 
         self.root = self.world_model.build_root(init_state)
-        self.root.reward = self.root.cal_reward()
         self.nodes.append(self.root)
 
         if self.min_threshold == 0:  # TODO: Experiment with this condition
@@ -316,7 +314,7 @@ class MCTS(SearchAlgo, Generic[State, Action]):
 
         self.trace_in_each_iter = []
         for i in range(self.iteration_num):
-            wandb.log({"iteration": i})
+            self.tracker.log({"iteration": i})
             if self.log:
                 self.logger.info(
                     f"---------------------  iteration {i} ------------------------"
@@ -325,8 +323,13 @@ class MCTS(SearchAlgo, Generic[State, Action]):
             path, cum_rewards = self.iterate(self.root)
             self.trace_in_each_iter.append(deepcopy(path))
 
-        mcts_output = self.prepare_output()
-        self.output_to_json(mcts_output=mcts_output)
+        mcts_output = self.reporter.prepare_output(
+            trace_in_each_iter=self.trace_in_each_iter,
+            nodes=self.nodes,
+            optim_nodes=self.optim_nodes,
+            k=self.k,
+        )
+        self.reporter.save_to_json(mcts_output=mcts_output)
         return self.trace_in_each_iter, mcts_output
 
     def __call__(self, init_state: str, **kwargs):
@@ -336,298 +339,3 @@ class MCTS(SearchAlgo, Generic[State, Action]):
         iteration_paths, mcts_outputs = self.search(init_state)
 
         return iteration_paths, mcts_outputs
-
-    #################################################################################
-    #                        Log and Evaluate Helper Functions                      #
-    #################################################################################
-
-    def eval_and_log_node(
-        self, node: MCTSNode, eval=False, log_metric=False, eval_type="test"
-    ):
-        parent_info = (
-            f"parent: {node.parent.id}" if node.parent is not None else "parent: N/A"
-        )
-        self.logger.info(
-            f"node {node.id}:    {parent_info} | depth: {node.depth} | visited: {node.visited} | expand_times: {node.expand_times}  | terminal: {node.is_terminal} | children: {len(node.children)}"
-        )
-        self.logger.info(
-            f"   reward: {node.reward:.4f} | Q: {node.Q:.4f} | uct: {self._uct(node):.4f} | cum_rewards: {node.cum_rewards}"
-        )
-        self.logger.info(f"   prompt: {node.prompt}")
-
-        if eval:
-            if eval_type == "test":
-                test_metric, eval_output = self.world_model.test_prompt(node.prompt)
-            else:
-                raise ValueError(f"eval_type {eval_type} is not supported.")
-            node.test_metric = test_metric
-        if log_metric:
-            if not isinstance(node.test_metric, tuple):
-                self.logger.info(f"   {eval_type} metric: {node.test_metric:.4f}")
-            else:
-                self.logger.info(f"   {eval_type} metric: {node.test_metric}")
-        self.logger.info("---------------------")
-        if eval:
-            return eval_output["correct"]
-        else:
-            return None
-
-    def log_vars(self):
-        self.logger.info("-------------------- MCTS -----------------------")
-        ignored_print_vars = [
-            "task",
-            "log_dir",
-            "logger",
-            "trace_in_each_iter",
-            "root",
-            "nodes",
-        ]
-        vars_dict = vars(self)
-        for var_name in vars_dict:
-            if var_name in ignored_print_vars:
-                continue
-            var_value = vars_dict[var_name]
-            self.logger.info(f"{var_name} : {var_value}")
-        self.logger.info("-------------------------------------------")
-
-    def log_path(self, path, eval=False, log_metric=False):
-        for node in path:
-            self.eval_and_log_node(node=node, eval=eval, log_metric=log_metric)
-
-    def log_nodes(self, nodes, eval=False, log_metric=False, eval_type="test"):
-        for i, node in enumerate(nodes):
-            self.eval_and_log_node(
-                node, eval=eval, log_metric=log_metric, eval_type=eval_type
-            )
-        self.logger.info("\n")
-
-    def log_paths(self, paths, eval=False, log_metric=False, eval_type="test"):
-        for i, path in enumerate(paths):
-            self.logger.info(f"\n----------------  path {i} ------------------")
-            for node in path:
-                self.eval_and_log_node(
-                    node, eval=eval, log_metric=log_metric, eval_type=eval_type
-                )
-
-    def _sort_helper(self, metric):
-        if isinstance(metric, tuple):
-            return metric[0]
-        else:
-            return metric
-
-    def prepare_output(self):
-        self.logger.info(
-            "\n---------------------  all iteration paths ------------------------"
-        )
-        self.log_paths(self.trace_in_each_iter)
-        self.logger.info("\n---------------------  all nodes ------------------------")
-        self.log_nodes(self.nodes)
-
-        # prepare output
-        paths_nodes = []
-        paths_ids = []
-        paths_qs = []
-        paths_rewards = []
-        paths_ucts = []
-
-        for i, path in enumerate(self.trace_in_each_iter):
-            path_nodes = []
-            path_ids = []
-            path_qs = []
-            path_rewards = []
-            path_ucts = []
-
-            for node_p in path:
-                # we need to get the node object from the nodes list
-                node = self.nodes[node_p.id]
-                path_ids.append(node.id)
-                uct = self._uct(node)
-                node.uct = uct
-                path_ucts.append(uct)
-                path_nodes.append(node)
-                path_qs.append(node.Q)
-                path_rewards.append(node.reward)
-
-            paths_nodes.append(path_nodes)
-            paths_ids.append(path_ids)
-            paths_qs.append(path_qs)
-            paths_rewards.append(path_rewards)
-            paths_ucts.append(path_ucts)
-
-            self.logger.info(f"path {i}: {path_ids} ")
-            self.logger.info(
-                f"mean values:   path_uct: {np.mean(path_ucts):.4f} | path_q: {np.mean(path_qs):.4f} | path_reward: {np.mean(path_rewards):.4f}"
-            )
-            self.logger.info(f"path_ucts:  {path_ucts}")
-            self.logger.info(f"paths_qs :  {paths_qs}")
-            self.logger.info(f"path_reward : {path_rewards}")
-            self.logger.info("---------------------------")
-
-        qs_rank = np.argsort([np.mean(row) for row in paths_qs])[::-1].tolist()
-        rewards_rank = np.argsort([np.mean(row) for row in paths_rewards])[
-            ::-1
-        ].tolist()
-
-        best_q_path = paths_nodes[qs_rank[0]]  # type: ignore
-        best_reward_path = paths_nodes[rewards_rank[0]]  # type: ignore
-        top_k_reward_nodes = sorted(
-            self.nodes, key=lambda node: node.reward, reverse=True
-        )[: self.k]
-
-        if len(self.world_model.test_dataloader) != 0:
-            self.logger.info("\n----------------  test nodes ------------------")
-            test_nodes_set = set(best_q_path + best_reward_path + top_k_reward_nodes)
-            detailed_metrics_columns = []
-            detailed_metrics_values = []
-            if hasattr(self.task, "test_metrics_definition"):
-                detailed_metrics_columns = ["node_id"] + [
-                    f"{metric['metric_name']}_{suffix}"
-                    for metric in self.task.test_metrics_definition
-                    for suffix in ["YES", "NO", "NA"]
-                ]
-            for node in self.nodes:
-                if node in test_nodes_set:
-                    correct_results = np.array(
-                        self.eval_and_log_node(
-                            node, eval=True, log_metric=True, eval_type="test"
-                        )
-                    )
-                    if len(correct_results.shape) == 2:
-                        list_of_counts = self._record_counts(correct_results)
-                        detailed_metrics_values.append([node.id] + list_of_counts)
-
-            if len(detailed_metrics_values) > 0:
-                wandb.log(
-                    {
-                        "detailed_metrics": wandb.Table(
-                            columns=detailed_metrics_columns,
-                            data=detailed_metrics_values,
-                        )
-                    }
-                )
-            self.logger.info("\n----------------  top_k_reward_nodes------------------")
-            for node in top_k_reward_nodes:
-                self.eval_and_log_node(
-                    node, eval=False, log_metric=True, eval_type="test"
-                )
-
-            self.logger.info("\n----------------  best_reward_path------------------")
-            for node in best_reward_path:
-                self.eval_and_log_node(
-                    node, eval=False, log_metric=True, eval_type="test"
-                )
-
-        selected_node = sorted(
-            best_reward_path,
-            key=lambda node: self._sort_helper(node.reward),
-            reverse=True,
-        )[0]
-
-        last_node_of_best_reward_path = best_reward_path[-1]
-        # log everything to wandb
-        wandb.run.summary["test_accuracy"] = selected_node.test_metric  # type: ignore
-        wandb.run.summary["last_node_test_accuracy"] = (  # type: ignore
-            last_node_of_best_reward_path.test_metric
-        )
-        # make a table and send all the path data to wandb
-        path_data_as_list = []
-        path_data_columns = ["path_id"] + list(self.nodes[0].to_dict().keys())
-        for i, path in enumerate(self.trace_in_each_iter):
-            for node in path:
-                node_dict = node.to_dict()
-                if node_dict["parent"] == -1:
-                    node_dict["parent"] = None
-                path_data_as_list.append([i] + list(node_dict.values()))
-        wandb.log(
-            {"paths": wandb.Table(columns=path_data_columns, data=path_data_as_list)}
-        )
-        # make a table of all the nodes visited
-        data_nodes_as_list = []
-        data_nodes_columns = [
-            key if key != "id" else "node_id" for key in self.nodes[0].to_dict().keys()
-        ]
-        data_nodes_columns.extend(["best_q_path", "best_reward_path", "selected_node"])
-        best_reward_path_ids = [node.id for node in best_reward_path]
-        best_q_path_ids = [node.id for node in best_q_path]
-        for node in self.nodes:
-            node_dict = node.to_dict()
-            if node_dict["parent"] == -1:
-                node_dict["parent"] = None
-            data_nodes_as_list.append(
-                list(node_dict.values())
-                + [
-                    node.id in best_q_path_ids,
-                    node.id in best_reward_path_ids,
-                    node.id == selected_node.id,
-                ]
-            )
-        wandb_node_table = wandb.Table(
-            columns=data_nodes_columns, data=data_nodes_as_list
-        )
-        tree_fields = {"node-id": "node_id", "node-parent": "parent"}
-        tree = wandb.plot_table(
-            vega_spec_name="rezazzr/tree_visualizer",
-            data_table=wandb_node_table,
-            fields=tree_fields,
-        )
-        wandb.log({"nodes": tree})
-        # make a graph of the nodes and optim nodes all together
-        data_optim_nodes_as_list = []
-        data_optim_nodes_columns = list(self.optim_nodes[0].to_dict().keys())
-        tree_fields = {"node-id": "node_id", "node-parent": "parent"}
-
-        for node in self.optim_nodes:
-            node_dict = node.to_dict()
-            if node_dict["parent"] == -1:
-                node_dict["parent"] = None
-            data_optim_nodes_as_list.append(list(node_dict.values()))
-
-        wandb_optim_node_table = wandb.Table(
-            columns=data_optim_nodes_columns, data=data_optim_nodes_as_list
-        )
-        tree = wandb.plot_table(
-            vega_spec_name="tree_optim_visualizer",
-            data_table=wandb_optim_node_table,
-            fields=tree_fields,
-        )
-        wandb.log({"optim_nodes": tree})
-
-        # end of loging to wandb
-
-        return dict(
-            all_paths=paths_nodes,
-            all_nodes=self.nodes,
-            best_q_path=best_q_path,
-            best_reward_path=best_reward_path,
-            top_k_reward_nodes=top_k_reward_nodes,
-            best_reward_path_last_node=[last_node_of_best_reward_path],
-            best_reward_path_selected_node=[selected_node],
-        )
-
-    def output_to_json(self, mcts_output):
-        data_to_save = {}
-        paths = []
-        for path in mcts_output["all_paths"]:
-            paths.append([node.to_dict() for node in path])
-        data_to_save["all_paths"] = paths
-
-        for key in mcts_output:
-            if key != "all_paths":
-                data_to_save[key] = [node.to_dict() for node in mcts_output[key]]
-        with open(os.path.join(self.log_dir, "data.json"), "w") as f:
-            json.dump(data_to_save, f, indent=4)
-
-    @staticmethod
-    def _record_counts(array: np.ndarray) -> List[int]:
-        counts_list = []
-
-        # Iterate over each column
-        for col in range(array.shape[1]):
-            counts = {1: 0, 0: 0, -1: 0}  # Initialize the counts for each value
-            unique, counts_array = np.unique(array[:, col], return_counts=True)
-            counts.update(dict(zip(unique, counts_array)))
-            # Extend the counts_list with the counts in the order -1, 0, 1
-            counts_list.extend([counts[1], counts[0], counts[-1]])
-
-        return counts_list
-        return counts_list

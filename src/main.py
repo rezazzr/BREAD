@@ -1,16 +1,10 @@
 import time
 
-import yaml
 from yaml_config_override import add_arguments
 
-import wandb
-from prompt_optim_agent import *
-
-
-def load_config(config_path):
-    with open(config_path, "r") as f:
-        config = yaml.safe_load(f)
-    return config
+from prompt_optim_agent import BaseAgent
+from prompt_optim_agent.language_model import LANGUAGE_MODELS
+from prompt_optim_agent.tracking import MetricsTracker
 
 
 def config():
@@ -18,127 +12,76 @@ def config():
     return args
 
 
-def validate_config(config):
+def _check(condition: bool, message: str):
+    """Raise ValueError if condition is False."""
+    if not condition:
+        raise ValueError(message)
+
+
+def _check_type(cfg: dict, key: str, expected_type, label: str):
+    """Validate that cfg[key] is an instance of expected_type."""
+    _check(isinstance(cfg[key], expected_type), f"{label} must be {expected_type.__name__}")
+
+
+def _check_choice(cfg: dict, key: str, choices: list, label: str):
+    """Validate that cfg[key] is one of the allowed choices."""
+    _check(cfg[key] in choices, f"{label} must be one of {choices}")
+
+
+def _validate_model_setting(cfg: dict, label: str):
+    """Validate a base_model_setting or optim_model_setting block."""
+    valid_types = list(LANGUAGE_MODELS.keys())
+    _check_choice(cfg, "model_type", valid_types, f"{label}.model_type")
+    _check(cfg["model_name"] is not None, f"{label}.model_name must be specified")
+    _check_type(cfg, "temperature", float, f"{label}.temperature")
+    if cfg["model_type"] == "openai":
+        _check(cfg.get("api_key") is not None, f"{label}.api_key is required for OpenAI models")
+
+
+def validate_config(cfg):
     # Basic settings
-    assert config["task_name"] is not None, "task_name must be specified"
-    assert config["search_algo"] in [
-        "mcts",
-        "beam_search",
-    ], "search_algo must be 'mcts' or 'beam_search'"
-    assert isinstance(config["print_log"], bool), "print_log must be a boolean"
-    assert config["log_dir"] is not None, "log_dir must be specified"
-    assert config["init_prompt"] is not None, "init_prompt must be specified"
+    _check(cfg["task_name"] is not None, "task_name must be specified")
+    _check_choice(cfg, "search_algo", ["mcts", "beam_search"], "search_algo")
+    _check_type(cfg, "print_log", bool, "print_log")
+    _check(cfg["log_dir"] is not None, "log_dir must be specified")
+    _check(cfg["init_prompt"] is not None, "init_prompt must be specified")
 
     # Task setting
-    assert isinstance(
-        config["task_setting"]["train_size"], (int, type(None))
-    ), "train_size must be an integer or None"
-    assert isinstance(
-        config["task_setting"]["eval_size"], int
-    ), "eval_size must be an integer"
-    assert isinstance(
-        config["task_setting"]["test_size"], int
-    ), "test_size must be an integer"
-    assert isinstance(config["task_setting"]["seed"], int), "seed must be an integer"
-    assert isinstance(
-        config["task_setting"]["post_instruction"], bool
-    ), "post_instruction must be a boolean"
+    task = cfg["task_setting"]
+    _check(isinstance(task["train_size"], (int, type(None))), "task_setting.train_size must be int or None")
+    _check_type(task, "eval_size", int, "task_setting.eval_size")
+    _check_type(task, "test_size", int, "task_setting.test_size")
+    _check_type(task, "seed", int, "task_setting.seed")
+    _check_type(task, "post_instruction", bool, "task_setting.post_instruction")
 
-    # Base model setting
-    assert config["base_model_setting"]["model_type"] in [
-        "openai",
-        "palm",
-        "hf_text2text",
-        "hf_textgeneration",
-        "ct_model",
-        "microsoft",
-    ], "base_model.model_type must be one of 'openai', 'palm', 'hf_text2text', 'hf_textgeneration', 'ct_model', 'microsoft'"
-    assert (
-        config["base_model_setting"]["model_name"] is not None
-    ), "base_model.model_name must be specified"
-    assert isinstance(
-        config["base_model_setting"]["temperature"], float
-    ), "base_model.temperature must be a float"
-    assert config["base_model_setting"]["device"] in [None, "cuda", "cpu"] or config[
-        "base_model_setting"
-    ]["device"].startswith(
-        "cuda:"
-    ), "base_model.device must be None, 'cuda', 'cpu', or 'cuda:x'"
-    if (
-        config["base_model_setting"]["model_type"] in ["openai", "palm"]
-        and config["base_model_setting"]["api_key"] is None
-    ):
-        raise ValueError("Please set base model's api key")
+    # Model settings
+    _validate_model_setting(cfg["base_model_setting"], "base_model_setting")
+    _validate_model_setting(cfg["optim_model_setting"], "optim_model_setting")
 
-    # Optim model setting
-    assert config["optim_model_setting"]["model_type"] in [
-        "openai",
-        "palm",
-        "hf_text2text",
-        "hf_textgeneration",
-        "ct_model",
-        "microsoft",
-    ], "optim_model.model_type must be one of 'openai', 'palm', 'hf_text2text', 'hf_textgeneration', 'ct_model'"
-    assert (
-        config["optim_model_setting"]["model_name"] is not None
-    ), "optim_model.model_name must be specified"
-    assert isinstance(
-        config["optim_model_setting"]["temperature"], float
-    ), "optim_model.temperature must be a float"
-    assert config["optim_model_setting"]["device"] in [None, "cuda", "cpu"] or config[
-        "optim_model_setting"
-    ]["device"].startswith(
-        "cuda:"
-    ), "optim_model.device must be None, 'cuda', 'cpu', or 'cuda:x'"
-    if (
-        config["optim_model_setting"]["model_type"] in ["openai", "palm"]
-        and config["optim_model_setting"]["api_key"] is None
-    ):
-        raise ValueError("Please set optim model's api key")
-
-    # Search config
-    assert isinstance(
-        config["search_setting"]["iteration_num"], int
-    ), "search.iteration_num must be an integer"
-    assert isinstance(
-        config["search_setting"]["expand_width"], int
-    ), "search.expand_width must be an integer"
-    assert isinstance(
-        config["search_setting"]["depth_limit"], int
-    ), "search.depth_limit must be an integer"
-    # MCTS setting
-    assert isinstance(
-        config["search_setting"]["min_depth"], int
-    ), "min_depth must be an integer"
-    assert isinstance(config["search_setting"]["w_exp"], float), "w_exp must be a float"
-    # Beam search setting
-    assert isinstance(
-        config["search_setting"]["beam_width"], int
-    ), "beam_width must be an integer"
+    # Search setting
+    search = cfg["search_setting"]
+    for key in ("iteration_num", "expand_width", "depth_limit", "min_depth", "beam_width"):
+        _check_type(search, key, int, f"search_setting.{key}")
+    _check_type(search, "w_exp", float, "search_setting.w_exp")
 
     # World model setting
-    assert isinstance(
-        config["world_model_setting"]["train_shuffle"], bool
-    ), "world_model.train_shuffle must be a boolean"
-    assert isinstance(
-        config["world_model_setting"]["num_new_prompts"], int
-    ), "world_model.num_new_prompts must be an integer"
-    assert isinstance(
-        config["world_model_setting"]["train_batch_size"], int
-    ), "world_model.train_batch_size must be an integer"
+    wm = cfg["world_model_setting"]
+    _check_type(wm, "train_shuffle", bool, "world_model_setting.train_shuffle")
+    _check_type(wm, "num_new_prompts", int, "world_model_setting.num_new_prompts")
+    _check_type(wm, "train_batch_size", int, "world_model_setting.train_batch_size")
 
 
 def main(args):
-    args["wandb"]["name"] += "-" + time.strftime("%Y-%m-%d-%H-%M-%S")
-    wandb_args = args.pop(
-        "wandb", None
-    )  # remove wandb from args because it is not a valid argument for BaseAgent and not used anywhere else
-    wandb.init(config=args, **wandb_args)
+    wandb_config = args.pop("wandb", None)
+    if wandb_config is not None:
+        wandb_config["name"] = wandb_config.get("name", "") + "-" + time.strftime("%Y-%m-%d-%H-%M-%S")
 
-    agent = BaseAgent(**args)
+    tracker = MetricsTracker(wandb_config=wandb_config)
+    tracker.set_config(args)
+
+    agent = BaseAgent(tracker=tracker, **args)
     agent.run()
-    wandb.finish()
-    return
+    tracker.finish()
 
 
 if __name__ == "__main__":

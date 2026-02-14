@@ -1,12 +1,10 @@
 import itertools
-from typing import Generic, List, Optional
+from typing import List, Optional
 
 import numpy as np
 
-from .base_algo import Action, State
 
-
-class MCTSNode(Generic[State, Action]):
+class MCTSNode:
     id_iter = itertools.count()
 
     @classmethod
@@ -16,7 +14,7 @@ class MCTSNode(Generic[State, Action]):
     def __init__(
         self,
         prompt: str,
-        action: Optional[Action],
+        action: Optional[str],
         parent: "Optional[MCTSNode]" = None,
     ):
         """
@@ -48,18 +46,11 @@ class MCTSNode(Generic[State, Action]):
         else:
             self.depth = parent.depth + 1
 
-    def calc_q(self, x) -> float:
-        return np.mean(x).item()
-
-    def cal_reward(self):
-        return self.reward
-
     @property
     def Q(self) -> float:
         if len(self.cum_rewards) == 0:
             return self.reward
-        else:
-            return self.calc_q(self.cum_rewards)
+        return np.mean(self.cum_rewards).item()
 
     def to_dict(self):
         return {

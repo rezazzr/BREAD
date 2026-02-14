@@ -1,3 +1,4 @@
+import logging
 import time
 from typing import Dict, Tuple
 
@@ -7,16 +8,7 @@ from openai.types.chat import ChatCompletionUserMessageParam
 
 from .base_model import BaseLanguageModel
 
-CHAT_COMPLETION_MODELS = [
-    "gpt-4o",
-    "gpt-4o-mini",
-    "gpt-4-turbo-preview",
-    "gpt-3.5-turbo",
-    "gpt-4",
-    "gpt-4-32k",
-    "gpt-3.5-turbo-16k",
-    "gpt-3.5-turbo-1106",
-]
+logger = logging.getLogger(__name__)
 
 
 class OpenAIModel(BaseLanguageModel):
@@ -30,19 +22,18 @@ class OpenAIModel(BaseLanguageModel):
     ):
         super().__init__(model_name, temperature, max_tokens, **kwargs)
 
-        assert (
-            model_name in CHAT_COMPLETION_MODELS
-        ), f"Model {model_name} not supported."
-
         if api_key is None:
             raise ValueError(f"api_key error: {api_key}")
         try:
             self.model = OpenAI(api_key=api_key)
         except Exception as e:
-            print(f"Init openai client error: \n{e}")
+            logger.error(f"Init openai client error: {e}")
             raise RuntimeError("Failed to initialize OpenAI client") from e
 
         self.max_parallel_requests = kwargs.get("max_parallel_requests", 4)
+        self.max_retries = kwargs.get("max_retries", 10)
+        self.initial_backoff = kwargs.get("initial_backoff", 1.0)
+        self.backoff_multiplier = kwargs.get("backoff_multiplier", 1.5)
 
     def batch_forward_func(self, batch_prompts):
         """
@@ -87,8 +78,8 @@ class OpenAIModel(BaseLanguageModel):
         messages = [
             ChatCompletionUserMessageParam(role="user", content=input),
         ]
-        backoff_time = 1
-        while True:
+        backoff_time = self.initial_backoff
+        for attempt in range(1, self.max_retries + 1):
             try:
 
                 def call_openai():
@@ -113,6 +104,13 @@ class OpenAIModel(BaseLanguageModel):
                 }
                 return content, logging_dict
             except Exception as e:
-                print(e, f" Sleeping {backoff_time} seconds...")
+                logger.warning(
+                    f"Attempt {attempt}/{self.max_retries} failed: {e}. "
+                    f"Sleeping {backoff_time:.1f}s..."
+                )
                 time.sleep(backoff_time)
-                backoff_time *= 1.5
+                backoff_time *= self.backoff_multiplier
+
+        raise RuntimeError(
+            f"OpenAI API call failed after {self.max_retries} retries for model '{self.model_name}'."
+        )

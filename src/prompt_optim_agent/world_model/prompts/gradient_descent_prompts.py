@@ -1,7 +1,7 @@
 # These prompts are modified based on Automatic Prompt Optimization with "Gradient Descent" and Beam Search
 # https://arxiv.org/abs/2305.03495
 
-gradient_prompt_tempelate = """
+gradient_prompt_template = """
 I'm writing prompts for a language model designed for a task.
 
 My current prompt is:
@@ -13,7 +13,7 @@ But this prompt gets the following examples wrong:
 For each wrong example, carefully examine each question and wrong answer step by step, provide comprehensive and different reasons why the prompt leads to the wrong answer. At last, based on all these reasons, summarize and list all the aspects that can improve the prompt.
 """.strip()
 
-optimize_prompt_tempelate = """
+optimize_prompt_template = """
 I'm writing prompts for a language model designed for a task.
 
 My current prompt is:
@@ -61,7 +61,7 @@ The evaluation of the repsonse is: {prediction}.
 """
 
 
-optimize_prompt_tempelate_single = """
+optimize_prompt_template_single = """
 I'm writing prompts for a language model designed for a task.
 
 My current prompt is:
@@ -84,7 +84,7 @@ Based on the above information, please write 1 new prompt following these guidel
 The new prompts is:
 """.strip()
 
-ascend_gradient_prompt_tempelate = """
+ascend_gradient_prompt_template = """
 I'm writing prompts for a language model designed for a task.
 
 My current prompt is:
@@ -96,7 +96,7 @@ This prompt gets the following examples correct:
 For each example, carefully examine each question and correct answer step by step, provide comprehensive and different reasons why the prompt leads to the correct answer. At last, based on all these reasons, summarize and list all the aspects that can improve the prompt.
 """.strip()
 
-ascend_optimize_prompt_tempelate = """
+ascend_optimize_prompt_template = """
 I'm writing prompts for a language model designed for a task.
 
 My current prompt is:
@@ -119,7 +119,7 @@ Based on the above information, please write {steps_per_gradient} new prompts fo
 The new prompts are:
 """.strip()
 
-ascend_optimize_prompt_tempelate_single = """
+ascend_optimize_prompt_template_single = """
 I'm writing prompts for a language model designed for a task.
 
 My current prompt is:
@@ -143,7 +143,7 @@ The new prompts is:
 """.strip()
 
 
-mix_optmize_prompt_tempelate_single = """
+mix_optimize_prompt_template_single = """
 I'm writing prompts for a language model designed for a task.
 
 My current prompt is:
@@ -173,7 +173,7 @@ The new prompts is:
 """.strip()
 
 
-mix_optmize_prompt_tempelate = """
+mix_optimize_prompt_template = """
 I'm writing prompts for a language model designed for a task.
 
 My current prompt is:
@@ -202,14 +202,14 @@ Based on the above information, please write {steps_per_gradient} new prompts fo
 The new prompts is:
 """.strip()
 
-summarization_prompt_tempelate = """
+summarization_prompt_template = """
 You are an expert summarizer. Provide a comprehensive summary of the following {nb_feedbacks} feedbacks:
 {feedbacks}
 Make sure to capture the main points, key arguments, and any notable similarities or differences between the feedbacks.
 Additionally, identify any recurring themes or concepts that are present across all three texts.
 """.strip()
 
-llm_based_metric_evaluation_prompt_tempelate = """
+llm_based_metric_evaluation_prompt_template = """
 You are an expert evaluator of language models. The language model you are evaluating was given a <task>, and a <prompt> and it generated a <response>.
 The task is:
 <task>

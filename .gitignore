@@ -3,3 +3,8 @@ logs/
 .llmapi.bin
 wandb/*
 visualization/*
+
+# Local-only backends and configs (never push)
+src/prompt_optim_agent/language_model/_local_*
+configs/all_configs/
+all_configs.zip

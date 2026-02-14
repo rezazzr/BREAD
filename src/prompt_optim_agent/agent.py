@@ -2,12 +2,11 @@ import os
 import time
 from datetime import timedelta
 
-import wandb
-
 from tasks import get_task
 
 from .language_model import get_language_model
 from .search_algo import get_search_algo
+from .tracking import MetricsTracker
 from .utils import create_logger, get_pacific_time
 from .world_model import get_world_model
 
@@ -25,42 +24,27 @@ class BaseAgent:
         optim_model_setting: dict,
         search_setting: dict,
         world_model_setting: dict,
+        tracker: MetricsTracker = None,
     ) -> None:
         """
         BaseAgent: set up task, logger, search algorithm, world model
 
         :param task_name: the names of .py files in the tasks folder
         :param search_algo: "mcts" or "beam_search"
-        :param base_model: the model that answers the
-        :param base_temperature: temperature of base_model
-        :param optim_model: the optimizer model that gives error feedback and generate new prompts
-        :param optim_temperature: temperature of optim_model
-
-        :param batch_size: batch size of each optimization step
-        :param train_size: training set size
-        :param eval_size: the set reserved for reward calculation
-        :param test_size: testing set size
-        :param train_shuffle: whether to shuffle the training set
-        :param seed: the seed for train/test split
-        :param post_instruction: whether the optimized prompt is behind the task question or in front of the question
-            (True: question + prompt, False: prompt + question)
-
-        :param log_dir: logger directory
-        :param data_dir: data file directory (if the data is stored in a file)
-        :param expand_width: number of optimization step in each expansion operation
-        :param num_new_prompts: number of new prompts sampled in each optimization step
-
-        :param min_depth: minimum depth of MCTS (early stop is applied only when depth is deeper than min_depth)
-        :param depth_limit: maximum depth of MCTS
-        :param iteration_num: iteration number of MCTS
-        :param w_exp: the weight between exploitation and exploration, default 2.5
-
+        :param init_prompt: the initial prompt to start optimization from
+        :param task_setting: task configuration (train_size, eval_size, etc.)
+        :param base_model_setting: config for the model that answers questions
+        :param optim_model_setting: config for the optimizer model that critiques & rewrites prompts
+        :param search_setting: MCTS/beam search parameters
+        :param world_model_setting: gradient descent engine parameters
+        :param tracker: experiment tracking instance (wandb wrapper)
         """
         self.task_name = task_name
         self.search_algo_name = search_algo
         self.print_log = print_log
         self.log_dir = log_dir
         self.init_prompt = init_prompt
+        self.tracker = tracker or MetricsTracker()
 
         self.task_setting = task_setting
         self.base_model_setting = base_model_setting
@@ -95,6 +79,7 @@ class BaseAgent:
             logger=self.logger,
             base_model=self.base_model,
             optim_model=self.optim_model,
+            tracker=self.tracker,
             **world_model_setting,
         )
 
@@ -103,28 +88,25 @@ class BaseAgent:
             world_model=self.world_model,
             logger=self.logger,
             log_dir=self.log_dir,
+            tracker=self.tracker,
             **self.search_setting,
         )
 
     def run(self):
-        """
-        Start searching from initial prompt
-        """
+        """Start searching from initial prompt."""
         self.logger.info(f"init_prompt: {self.init_prompt}")
         start_time = time.time()
 
         states, result_dict = self.search_algo.search(init_state=self.init_prompt)
         end_time = time.time()
         exe_time = str(timedelta(seconds=end_time - start_time)).split(".")[0]
-        wandb.log({"execution_time": exe_time})
-        self.logger.info(f"\nDone!Excution time: {exe_time}")
+        self.tracker.log({"execution_time": exe_time})
+        self.logger.info(f"\nDone! Execution time: {exe_time}")
         return states, result_dict
 
     def log_vars(self):
-        """
-        Log arguments
-        """
-        ignored_print_vars = ["logger"]
+        """Log arguments."""
+        ignored_print_vars = ["logger", "tracker"]
         vars_dict = vars(self)
         for var_name in vars_dict:
             if var_name in ignored_print_vars:

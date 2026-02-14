@@ -1,16 +1,14 @@
-import glob
 import os
 import time
 from datetime import timedelta
 
 from tqdm import tqdm
 
-import wandb
-from tasks import *
+from tasks import get_task
 
 from .language_model import get_language_model
-from .utils import *
-from .world_model.prompts import *
+from .tracking import MetricsTracker
+from .utils import create_logger, parse_model_args
 
 
 def test(
@@ -27,11 +25,13 @@ def test(
     log_dir="logs/",
     log_examples=True,
     data_dir=None,
+    tracker: MetricsTracker = None,
     **kwargs,
 ):
     """
     Evaluate prompt on task testing dataset
     """
+    tracker = tracker or MetricsTracker()
 
     if prompt_file is not None:
         if os.path.exists(prompt_file):
@@ -81,8 +81,8 @@ def test(
     count = 0
     for batch in pbar:
         batch_prompts = build_forward_prompts_func(batch["question"], eval_prompt)
-        responses, loging_dict = batch_forward_func(batch_prompts)
-        wandb.log({f"{key}_base_model": value for key, value in loging_dict.items()})
+        responses, logging_dict = batch_forward_func(batch_prompts)
+        tracker.log({f"{key}_base_model": value for key, value in logging_dict.items()})
         preds = task.batch_clean_responses(responses)
         labels = task.clean_labels(batch["answer"])
         all_preds.extend(preds)
@@ -132,7 +132,7 @@ def test(
     logger.info("--------------------------------------------")
     end_time = time.time()
     exe_time = str(timedelta(seconds=end_time - start_time)).split(".")[0]
-    logger.info(f"\nDone! Excution time: {exe_time}")
+    logger.info(f"\nDone! Execution time: {exe_time}")
     return {
         "metric": metric,
         "all_chats": all_chats,
@@ -142,11 +142,13 @@ def test(
 
 
 def eval_instruction_with_loader(
-    task, eval_prompt, base_model, dataloader, temperature=0, record_outputs=True
+    task, eval_prompt, base_model, dataloader, temperature=0, record_outputs=True,
+    tracker: MetricsTracker = None,
 ):
     """
     evaluate cur_prompt on task testing dataset
     """
+    tracker = tracker or MetricsTracker()
 
     build_forward_prompts_func = task.build_forward_prompts_completion
     batch_forward_func = base_model.batch_forward_func
@@ -161,8 +163,8 @@ def eval_instruction_with_loader(
     pbar = tqdm(dataloader, leave=False)
     for batch in pbar:
         batch_prompts = build_forward_prompts_func(batch["question"], eval_prompt)
-        responses, loging_dict = batch_forward_func(batch_prompts)
-        wandb.log({f"{key}_base_model": value for key, value in loging_dict.items()})
+        responses, logging_dict = batch_forward_func(batch_prompts)
+        tracker.log({f"{key}_base_model": value for key, value in logging_dict.items()})
         preds = task.batch_clean_responses(responses)
         labels = task.clean_labels(batch["answer"])
         all_preds.extend(preds)

@@ -22,14 +22,12 @@ task_setting:
 #  B A S E   M O D E L   (answers questions)
 ###############################################################################
 base_model_setting:
-  model_type:             # openai | hf_text2text | hf_textgeneration | ct_model
-  model_name:             # model id (OpenAI, HF repo, or local dir)
+  model_type:             # openai  (register new backends in language_model/__init__.py)
+  model_name:             # model id, e.g. gpt-4o
   temperature:            # 0.0-1.0   → reproducibility vs diversity
   max_tokens:             # generation cut-off
-  api_key:                # required for API models; env-vars allowed
-  device:                 # cuda | cpu | cuda:0 …  (null = auto)
-  model_path:             # local path for ct_model binaries
-  max_parallel_requests:  # OpenAI threading
+  api_key:                # required for OpenAI models
+  max_parallel_requests:  # OpenAI threading concurrency
 
 ###############################################################################
 #  O P T I M I S E R   M O D E L   (critiques & rewrites prompts)
@@ -40,8 +38,6 @@ optim_model_setting:
   temperature:
   max_tokens:
   api_key:
-  device:
-  model_path:
   max_parallel_requests:
 
 ###############################################################################

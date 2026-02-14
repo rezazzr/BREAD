@@ -1,4 +1,3 @@
-from . import *
 from .world_model import WorldModel
 
 WORLD_MODELS = {
@@ -7,7 +6,12 @@ WORLD_MODELS = {
 
 
 def get_world_model(world_model_name):
-    assert (
-        world_model_name in WORLD_MODELS.keys()
-    ), f"World model {world_model_name} is not supported."
+    if world_model_name not in WORLD_MODELS:
+        raise ValueError(
+            f"World model '{world_model_name}' is not supported. "
+            f"Available: {list(WORLD_MODELS.keys())}"
+        )
     return WORLD_MODELS[world_model_name]
+
+
+__all__ = ["get_world_model", "WorldModel"]

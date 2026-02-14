@@ -5,27 +5,27 @@ import re
 from typing import Tuple
 
 import numpy as np
-import wandb
 
-from ..utils import *
+from prompt_optim_agent.tracking import MetricsTracker
+
 from .prompts.gradient_descent_prompts import (
-    ascend_gradient_prompt_tempelate,
-    ascend_optimize_prompt_tempelate,
-    ascend_optimize_prompt_tempelate_single,
+    ascend_gradient_prompt_template,
+    ascend_optimize_prompt_template,
+    ascend_optimize_prompt_template_single,
     example_template,
     example_without_label_template,
-    gradient_prompt_tempelate,
-    mix_optmize_prompt_tempelate,
-    mix_optmize_prompt_tempelate_single,
-    optimize_prompt_tempelate,
-    optimize_prompt_tempelate_single,
-    summarization_prompt_tempelate,
+    gradient_prompt_template,
+    mix_optimize_prompt_template,
+    mix_optimize_prompt_template_single,
+    optimize_prompt_template,
+    optimize_prompt_template_single,
+    summarization_prompt_template,
 )
 from .prompts.log_prompt_templates import (
-    forward_log_tempelate,
-    gradient_log_tempelate,
+    forward_log_template,
+    gradient_log_template,
     gradient_summary_template,
-    optimize_log_tempelate,
+    optimize_log_template,
 )
 
 
@@ -38,6 +38,7 @@ class GradientDescent:
         print_log=True,
         logger=None,
         num_new_prompts=1,
+        tracker: MetricsTracker = None,
         **kwargs,
     ):
 
@@ -47,6 +48,7 @@ class GradientDescent:
         self.logger = logger
         self.print_log = print_log if logger is not None else False
         self.num_new_prompts = num_new_prompts
+        self.tracker = tracker or MetricsTracker()
         self.positive_reinforcement_depth = kwargs.get(
             "positive_reinforcement_depth", 1
         )
@@ -58,17 +60,17 @@ class GradientDescent:
         def _select_template(single, multi):
             return single if num_new_prompts == 1 else multi
 
-        self.optimize_prompt_tempelate = _select_template(
-            optimize_prompt_tempelate_single, optimize_prompt_tempelate
+        self.optimize_prompt_template = _select_template(
+            optimize_prompt_template_single, optimize_prompt_template
         )
-        self.ascend_optimize_prompt_tempelate = _select_template(
-            ascend_optimize_prompt_tempelate_single, ascend_optimize_prompt_tempelate
+        self.ascend_optimize_prompt_template = _select_template(
+            ascend_optimize_prompt_template_single, ascend_optimize_prompt_template
         )
-        self.mix_optimize_prompt_tempelate = _select_template(
-            mix_optmize_prompt_tempelate_single, mix_optmize_prompt_tempelate
+        self.mix_optimize_prompt_template = _select_template(
+            mix_optimize_prompt_template_single, mix_optimize_prompt_template
         )
-        self.gradient_prompt_tempelate = gradient_prompt_tempelate
-        self.ascend_gradient_prompt_template = ascend_gradient_prompt_tempelate
+        self.gradient_prompt_template = gradient_prompt_template
+        self.ascend_gradient_prompt_template = ascend_gradient_prompt_template
         self.example_template = example_template
 
         self._build_forward_prompts_func = task.build_forward_prompts_completion
@@ -78,7 +80,7 @@ class GradientDescent:
         batch_size = len(batch["question"])
         batch_prompts = self._build_forward_prompts_func(batch["question"], cur_prompt)
         responses, logging_dict = self._batch_forward_func(batch_prompts)
-        wandb.log({f"{key}_base_model": value for key, value in logging_dict.items()})
+        self.tracker.log({f"{key}_base_model": value for key, value in logging_dict.items()})
 
         if self.logger is not None:
             for p, r in zip(batch_prompts, responses):
@@ -121,7 +123,7 @@ class GradientDescent:
         }
 
         if self.print_log and self.logger is not None:
-            log_str = forward_log_tempelate.format(
+            log_str = forward_log_template.format(
                 cur_prompt=cur_prompt,
                 batch_prompts=batch_prompts,
                 responses=responses,
@@ -229,9 +231,9 @@ class GradientDescent:
         return error_string, correct_string
 
     def _build_prompt_trajectory_str(self, prompts):
-        prompt_path_str_tempelate = "({index}) {prompt}\n"
+        prompt_path_str_template = "({index}) {prompt}\n"
         return "".join(
-            prompt_path_str_tempelate.format(index=i, prompt=prompt)
+            prompt_path_str_template.format(index=i, prompt=prompt)
             for i, prompt in enumerate(prompts)
         )
 
@@ -242,7 +244,7 @@ class GradientDescent:
                 i=i, gradient=gradient
             )
         feedbacks += "</feedbacks>"
-        summary_prompt = summarization_prompt_tempelate.format(
+        summary_prompt = summarization_prompt_template.format(
             nb_feedbacks=len(batch_gradient), feedbacks=feedbacks
         )
         return summary_prompt
@@ -251,14 +253,14 @@ class GradientDescent:
         self,
         cur_prompt,
         example_string,
-        gradient_prompt_tempelate,
+        gradient_prompt_template,
         nb_gradient_samples: int = 1,
     ):
         assert (
             nb_gradient_samples >= 1 and nb_gradient_samples % 1 == 0
         ), "nb_gradient_samples must be an integer greater than or equal to 1."
 
-        gradient_prompt = gradient_prompt_tempelate.format(
+        gradient_prompt = gradient_prompt_template.format(
             cur_prompt=cur_prompt, example_string=example_string
         )
 
@@ -279,10 +281,10 @@ class GradientDescent:
 
                 self.logger.info(log_str)
 
-        wandb.log({f"{key}_optim_model": value for key, value in logging_dict.items()})
+        self.tracker.log({f"{key}_optim_model": value for key, value in logging_dict.items()})
 
         if self.print_log and self.logger is not None:
-            log_str = gradient_log_tempelate.format(
+            log_str = gradient_log_template.format(
                 gradient_prompt=gradient_prompt, gradient=gradient
             )
 
@@ -304,13 +306,13 @@ class GradientDescent:
         gradient_negative: str,
         trajectory_prompts,
         steps_per_gradient,
-        optimize_prompt_tempelate,
+        optimize_prompt_template,
     ):
         assert (
             error_string is not None or correct_string is not None
         ), "[Optimization Error] either error_string or correct_string should be provided."
 
-        optimize_prompt = optimize_prompt_tempelate.format(
+        optimize_prompt = optimize_prompt_template.format(
             cur_prompt=cur_prompt,
             correct_string=correct_string,
             error_string=error_string,
@@ -321,11 +323,11 @@ class GradientDescent:
         )
 
         response, logging_dict = self.optim_model.generate(optimize_prompt)
-        wandb.log({f"{key}_optim_model": value for key, value in logging_dict.items()})
+        self.tracker.log({f"{key}_optim_model": value for key, value in logging_dict.items()})
 
         optimized_prompt = self._clean_optim_response(response)
         if self.print_log and self.logger is not None:
-            log_str = optimize_log_tempelate.format(
+            log_str = optimize_log_template.format(
                 optimize_prompt=optimize_prompt,
                 response=response,
                 optimized_prompt=optimized_prompt,
@@ -366,36 +368,36 @@ class GradientDescent:
         trajectory_prompts = self._build_prompt_trajectory_str(trajectory_prompts)
 
         if forward_output["acc"] == 1.0:
-            optimize_prompt_tempelate = self.ascend_optimize_prompt_tempelate
+            optimize_prompt_template = self.ascend_optimize_prompt_template
             gradient_positive, gradient_positive_prompt = self.cal_gradient(
                 cur_prompt=cur_prompt,
                 example_string=correct_string,
-                gradient_prompt_tempelate=self.ascend_gradient_prompt_template,
+                gradient_prompt_template=self.ascend_gradient_prompt_template,
                 nb_gradient_samples=self.gradient_sampling,
             )
         elif forward_output["acc"] == 0.0:
-            optimize_prompt_tempelate = self.optimize_prompt_tempelate
+            optimize_prompt_template = self.optimize_prompt_template
             gradient_negative, gradient_negative_prompt = self.cal_gradient(
                 cur_prompt=cur_prompt,
                 example_string=error_string,
-                gradient_prompt_tempelate=self.gradient_prompt_tempelate,
+                gradient_prompt_template=self.gradient_prompt_template,
                 nb_gradient_samples=self.gradient_sampling,
             )
         else:
             gradient_negative, gradient_negative_prompt = self.cal_gradient(
                 cur_prompt=cur_prompt,
                 example_string=error_string,
-                gradient_prompt_tempelate=self.gradient_prompt_tempelate,
+                gradient_prompt_template=self.gradient_prompt_template,
                 nb_gradient_samples=self.gradient_sampling,
             )
             if depth is not None and depth < self.positive_reinforcement_depth:
-                optimize_prompt_tempelate = self.optimize_prompt_tempelate
+                optimize_prompt_template = self.optimize_prompt_template
             else:
-                optimize_prompt_tempelate = self.mix_optimize_prompt_tempelate
+                optimize_prompt_template = self.mix_optimize_prompt_template
                 gradient_positive, gradient_positive_prompt = self.cal_gradient(
                     cur_prompt=cur_prompt,
                     example_string=correct_string,
-                    gradient_prompt_tempelate=self.ascend_gradient_prompt_template,
+                    gradient_prompt_template=self.ascend_gradient_prompt_template,
                     nb_gradient_samples=self.gradient_sampling,
                 )
 
@@ -407,7 +409,7 @@ class GradientDescent:
             gradient_negative=gradient_negative,
             trajectory_prompts=trajectory_prompts,
             steps_per_gradient=self.num_new_prompts,  # number of new prompts to generate from the gradient
-            optimize_prompt_tempelate=optimize_prompt_tempelate,
+            optimize_prompt_template=optimize_prompt_template,
         )
 
         gradient_descent_output = forward_output

@@ -3,15 +3,10 @@ import os
 from datetime import datetime
 from glob import glob
 
-import pytz
-
-logging.getLogger("openai").setLevel(logging.ERROR)
+# Suppress noisy third-party loggers
+logging.getLogger("openai").setLevel(logging.CRITICAL)
 logging.getLogger("urllib3").setLevel(logging.ERROR)
-
-
-class HTTPFilter(logging.Filter):
-    def filter(self, record):
-        return not record.getMessage().startswith("HTTP")
+logging.getLogger("datasets").setLevel(logging.CRITICAL)
 
 
 def parse_model_args(kwargs):
@@ -29,10 +24,7 @@ def parse_model_args(kwargs):
 
 
 def get_pacific_time():
-    current_time = datetime.now()
-    pacific = pytz.timezone("US/Pacific")
-    pacific_time = current_time.astimezone(pacific)
-    return pacific_time
+    return datetime.now()
 
 
 def create_logger(
@@ -51,7 +43,6 @@ def create_logger(
     num = len(glob(logging_dir + "*"))
 
     logging_dir += "-" + f"{num:03d}" + ".log"
-    http_filter = HTTPFilter()
 
     logging.basicConfig(
         level=logging.INFO,
@@ -60,8 +51,4 @@ def create_logger(
         handlers=[logging.StreamHandler(), logging.FileHandler(f"{logging_dir}")],
     )
     logger = logging.getLogger("prompt optimization agent")
-    logging.getLogger("openai").setLevel(logging.CRITICAL)
-    logging.getLogger("datasets").setLevel(logging.CRITICAL)
-    for handler in logging.getLogger().handlers:
-        handler.addFilter(http_filter)
     return logger
