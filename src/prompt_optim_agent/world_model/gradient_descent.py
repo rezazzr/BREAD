@@ -6,6 +6,7 @@ from typing import Tuple
 
 import numpy as np
 
+from prompt_optim_agent.console import get_console
 from prompt_optim_agent.tracking import MetricsTracker
 
 from .prompts.gradient_descent_prompts import (
@@ -77,7 +78,6 @@ class GradientDescent:
         self._batch_forward_func = self.base_model.batch_forward_func
 
     def forward(self, batch, cur_prompt):
-        batch_size = len(batch["question"])
         batch_prompts = self._build_forward_prompts_func(batch["question"], cur_prompt)
         responses, logging_dict = self._batch_forward_func(batch_prompts)
         self.tracker.log({f"{key}_base_model": value for key, value in logging_dict.items()})
@@ -99,21 +99,18 @@ class GradientDescent:
         )
         acc = self.task.cal_metric_from_cal_correct_output(correct)
 
-        batch_logs = []
-        for i in range(batch_size):
-            batch_logs.append(
-                {
-                    "cur_prompt": cur_prompt,
-                    "question": batch["question"][i],
-                    "model_input": batch_prompts[i],
-                    "gt_answer": (
-                        batch["answer"][i] if batch_answers is not None else "<NA>"
-                    ),
-                    "model_response": responses[i],
-                    "label": labels[i] if labels is not None else "<NA>",
-                    "pred": preds[i],
-                }
-            )
+        batch_logs = [
+            {
+                "cur_prompt": cur_prompt,
+                "question": batch["question"][i],
+                "model_input": batch_prompts[i],
+                "gt_answer": batch["answer"][i] if batch_answers is not None else "<NA>",
+                "model_response": responses[i],
+                "label": labels[i] if labels is not None else "<NA>",
+                "pred": preds[i],
+            }
+            for i in range(len(batch["question"]))
+        ]
 
         forward_output = {
             "cur_prompt": cur_prompt,
@@ -122,57 +119,42 @@ class GradientDescent:
             "acc": acc,
         }
 
-        if self.print_log and self.logger is not None:
-            log_str = forward_log_template.format(
+        if self.print_log:
+            self.logger.info(forward_log_template.format(
                 cur_prompt=cur_prompt,
                 batch_prompts=batch_prompts,
                 responses=responses,
                 preds=preds,
                 labels=labels,
-                correct=forward_output["correct"],
-                acc=forward_output["acc"],
-            )
+                correct=correct,
+                acc=acc,
+            ))
 
-            self.logger.info(log_str)
+        # Console: compact forward results
+        get_console().forward_results(labels, preds, correct, acc)
         return forward_output
-
-    def _clean_self_eval_score(self, response):
-        return re.findall(r"\d+", response)[-1]
 
     def _split_error_and_correct_examples(self, forward_output) -> Tuple[str, str]:
         error_examples = []
         correct_examples = []
-        count = 0
         for i, example in enumerate(forward_output["examples"]):
-            if forward_output["correct"][i] == 0:
-                count += 1
-                error_examples.append(
-                    self.example_template.format(
-                        index=count,
-                        question=example["model_input"],
-                        label=example["label"],
-                        response=example["model_response"],
-                        prediction=example["pred"],
-                    )
-                )
-            elif forward_output["correct"][i] == 1:
-                count += 1
-                correct_examples.append(
-                    self.example_template.format(
-                        index=count,
-                        question=example["model_input"],
-                        label=example["label"],
-                        response=example["model_response"],
-                        prediction=example["pred"],
-                    )
-                )
-            else:
+            label = forward_output["correct"][i]
+            if label not in (0, 1):
                 raise ValueError(
                     f"_get_error_examples: invalid correct number {i} {forward_output}."
                 )
-        error_string = "".join(error_examples)
-        correct_string = "".join(correct_examples)
-        return error_string, correct_string
+            formatted = self.example_template.format(
+                index=i + 1,
+                question=example["model_input"],
+                label=example["label"],
+                response=example["model_response"],
+                prediction=example["pred"],
+            )
+            if label == 0:
+                error_examples.append(formatted)
+            else:
+                correct_examples.append(formatted)
+        return "".join(error_examples), "".join(correct_examples)
 
     def _split_error_and_correct_examples_multi_metric(
         self, forward_output
@@ -181,73 +163,50 @@ class GradientDescent:
         correct_examples = []
         correct_metric_based = np.array(forward_output["correct"]).transpose()
         for i, metric in enumerate(self.task.metrics_definition):
-            metric_name = metric["metric_name"]
-            metric_desc = metric["metric_desc"]
-            metric_instruction = metric["metric_instruction"]
+            metric_header = (
+                f"<metric_name>\n{metric['metric_name']}\n</metric_name>\n"
+                f"<metric_description>\n{metric['metric_desc']}\n</metric_description>\n"
+                f"<metric_instruction>\n{metric['metric_instruction']}\n</metric_instruction>\n"
+            )
             metric_error_examples = []
             metric_correct_examples = []
             for j, example in enumerate(forward_output["examples"]):
                 pred_example = correct_metric_based[i, j]
-                if pred_example > -1:
-                    # this means the example is not N/A
-                    if pred_example == 0:
-                        metric_error_examples.append(
-                            example_without_label_template.format(
-                                index=j,
-                                question=example["question"],
-                                response=example["model_response"],
-                                prediction="NO",
-                            )
-                        )
-                    elif pred_example == 1:
-                        metric_correct_examples.append(
-                            example_without_label_template.format(
-                                index=j,
-                                question=example["question"],
-                                response=example["model_response"],
-                                prediction="YES",
-                            )
-                        )
-                    else:
-                        raise ValueError(
-                            f"invalid evaluation label for the sample {j}, label={pred_example}"
-                        )
-            if len(metric_error_examples) > 0:
-                error_examples.append(
-                    f"<metric_name>\n{metric_name}\n</metric_name>\n"
-                    f"<metric_description>\n{metric_desc}\n</metric_description>\n"
-                    f"<metric_instruction>\n{metric_instruction}\n</metric_instruction>\n"
-                    + "".join(metric_error_examples)
+                if pred_example <= -1:
+                    continue
+                if pred_example not in (0, 1):
+                    raise ValueError(
+                        f"invalid evaluation label for the sample {j}, label={pred_example}"
+                    )
+                prediction = "NO" if pred_example == 0 else "YES"
+                formatted = example_without_label_template.format(
+                    index=j,
+                    question=example["question"],
+                    response=example["model_response"],
+                    prediction=prediction,
                 )
-            if len(metric_correct_examples) > 0:
-                correct_examples.append(
-                    f"<metric_name>\n{metric_name}\n</metric_name>\n"
-                    f"<metric_description>\n{metric_desc}\n</metric_description>\n"
-                    f"<metric_instruction>\n{metric_instruction}\n</metric_instruction>\n"
-                    + "".join(metric_correct_examples)
-                )
-        error_string = "".join(error_examples)
-        correct_string = "".join(correct_examples)
-        return error_string, correct_string
+                if pred_example == 0:
+                    metric_error_examples.append(formatted)
+                else:
+                    metric_correct_examples.append(formatted)
+            if metric_error_examples:
+                error_examples.append(metric_header + "".join(metric_error_examples))
+            if metric_correct_examples:
+                correct_examples.append(metric_header + "".join(metric_correct_examples))
+        return "".join(error_examples), "".join(correct_examples)
 
     def _build_prompt_trajectory_str(self, prompts):
-        prompt_path_str_template = "({index}) {prompt}\n"
-        return "".join(
-            prompt_path_str_template.format(index=i, prompt=prompt)
-            for i, prompt in enumerate(prompts)
-        )
+        return "".join(f"({i}) {prompt}\n" for i, prompt in enumerate(prompts))
 
     def _get_gradient_summary_prompt(self, batch_gradient):
-        feedbacks = "<feedbacks>\n"
-        for i, gradient in enumerate(batch_gradient):
-            feedbacks += "<feedback {i}>\n{gradient}\n</feedback {i}>\n".format(
-                i=i, gradient=gradient
-            )
-        feedbacks += "</feedbacks>"
-        summary_prompt = summarization_prompt_template.format(
+        feedback_parts = [
+            f"<feedback {i}>\n{gradient}\n</feedback {i}>"
+            for i, gradient in enumerate(batch_gradient)
+        ]
+        feedbacks = "<feedbacks>\n" + "\n".join(feedback_parts) + "\n</feedbacks>"
+        return summarization_prompt_template.format(
             nb_feedbacks=len(batch_gradient), feedbacks=feedbacks
         )
-        return summary_prompt
 
     def cal_gradient(
         self,
@@ -274,22 +233,20 @@ class GradientDescent:
             gradient_summary_prompt = self._get_gradient_summary_prompt(gradient_batch)
             gradient, _ = self.optim_model.generate(gradient_summary_prompt)
 
-            if self.print_log and self.logger is not None:
-                log_str = gradient_summary_template.format(
+            if self.print_log:
+                self.logger.info(gradient_summary_template.format(
                     prompt=gradient_summary_prompt, summary=gradient
-                )
-
-                self.logger.info(log_str)
+                ))
 
         self.tracker.log({f"{key}_optim_model": value for key, value in logging_dict.items()})
 
-        if self.print_log and self.logger is not None:
-            log_str = gradient_log_template.format(
+        if self.print_log:
+            self.logger.info(gradient_log_template.format(
                 gradient_prompt=gradient_prompt, gradient=gradient
-            )
+            ))
 
-            self.logger.info(log_str)
-
+        # Console: truncated gradient summary
+        get_console().gradient_summary(gradient)
         return gradient, gradient_prompt
 
     def _clean_optim_response(self, optim_response):
@@ -326,36 +283,34 @@ class GradientDescent:
         self.tracker.log({f"{key}_optim_model": value for key, value in logging_dict.items()})
 
         optimized_prompt = self._clean_optim_response(response)
-        if self.print_log and self.logger is not None:
-            log_str = optimize_log_template.format(
+        if self.print_log:
+            self.logger.info(optimize_log_template.format(
                 optimize_prompt=optimize_prompt,
                 response=response,
                 optimized_prompt=optimized_prompt,
-            )
-            self.logger.info(log_str)
+            ))
 
+        # Console: show new prompt(s)
+        get_console().optimization_result(optimized_prompt)
         return optimized_prompt
 
     def gradient_descent_step(self, cur_prompt: str, batch, helper_data, depth=None):
-
-        (
-            gradient_positive,
-            gradient_negative,
-            gradient_positive_prompt,
-            gradient_negative_prompt,
-        ) = ("", "", "", "")
+        gradient_positive = ""
+        gradient_negative = ""
+        gradient_positive_prompt = ""
+        gradient_negative_prompt = ""
         if self.logger is not None:
             self.logger.info(f"cur_prompt: {cur_prompt}")
 
         forward_output = self.forward(batch=batch, cur_prompt=cur_prompt)
         correct_np = np.array(forward_output["correct"])
-        if len(correct_np.shape) == 1:
-            # this means we are dealing with single metric evaluation for each sample in the batch
+        if correct_np.ndim == 1:
+            # Single metric per sample
             error_string, correct_string = self._split_error_and_correct_examples(
                 forward_output=forward_output
             )
-        elif len(correct_np.shape) == 2:
-            # this means we are dealing with multiple metric evaluation for each sample in the batch
+        elif correct_np.ndim == 2:
+            # Multiple metrics per sample
             error_string, correct_string = (
                 self._split_error_and_correct_examples_multi_metric(
                     forward_output=forward_output
@@ -364,8 +319,9 @@ class GradientDescent:
         else:
             raise ValueError(f"The correct_np shape is not valid: {correct_np.shape}")
 
-        trajectory_prompts = helper_data["trajectory_prompts"]
-        trajectory_prompts = self._build_prompt_trajectory_str(trajectory_prompts)
+        trajectory_prompts = self._build_prompt_trajectory_str(
+            helper_data["trajectory_prompts"]
+        )
 
         if forward_output["acc"] == 1.0:
             optimize_prompt_template = self.ascend_optimize_prompt_template
@@ -408,43 +364,32 @@ class GradientDescent:
             gradient_positive=gradient_positive,
             gradient_negative=gradient_negative,
             trajectory_prompts=trajectory_prompts,
-            steps_per_gradient=self.num_new_prompts,  # number of new prompts to generate from the gradient
+            steps_per_gradient=self.num_new_prompts,
             optimize_prompt_template=optimize_prompt_template,
         )
 
-        gradient_descent_output = forward_output
-        gradient_descent_output["example_string"] = self._format_tagged_output(
+        forward_output["example_string"] = self._format_tagged_output(
             [("error examples", error_string), ("correct examples", correct_string)]
         )
-
-        gradient_descent_output["gradient"] = self._format_tagged_output(
+        forward_output["gradient"] = self._format_tagged_output(
             [
                 ("positive gradient", gradient_positive),
                 ("negative gradient", gradient_negative),
             ]
         )
-        gradient_descent_output["gradient_prompt"] = self._format_tagged_output(
+        forward_output["gradient_prompt"] = self._format_tagged_output(
             [
                 ("positive gradient prompt", gradient_positive_prompt),
                 ("negative gradient prompt", gradient_negative_prompt),
             ]
         )
-        gradient_descent_output["optimized_prompts"] = optimized_prompts
-        return gradient_descent_output
+        forward_output["optimized_prompts"] = optimized_prompts
+        return forward_output
 
     def _format_tagged_output(self, tag_value_pairs):
-        """
-        Create a formatted string with values wrapped in XML-style tags.
-
-        Args:
-            tag_value_pairs: A list of (tag_name, value) tuples
-
-        Returns:
-            A formatted string with all values wrapped in their respective tags
-        """
-
+        """Wrap each (tag, value) pair in XML-style tags and join them."""
         return "\n".join(
-            [f"<{tag}>\n{value}\n</{tag}>" for tag, value in tag_value_pairs]
+            f"<{tag}>\n{value}\n</{tag}>" for tag, value in tag_value_pairs
         ).strip()
 
     def __call__(self, batch, cur_prompt: str, helper_data=None, depth=None):
