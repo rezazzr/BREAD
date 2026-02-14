@@ -18,5 +18,8 @@
         "titleBar.inactiveBackground": "#dd053199",
         "titleBar.inactiveForeground": "#e7e7e799"
     },
-    "peacock.color": "#dd0531"
+    "peacock.color": "#dd0531",
+    "python.defaultInterpreterPath": "/home/rezadavari/.cache/pypoetry/virtualenvs/prompt-migration-agent-1MxkL2GM-py3.12/bin/python",
+    "python.linting.enabled": true,
+    "python.linting.pylintEnabled": false
 }
