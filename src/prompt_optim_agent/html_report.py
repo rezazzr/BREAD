@@ -120,7 +120,7 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>BREAD — MCTS Tree</title>
+<title>TRAS — MCTS Tree</title>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <style>
 /* ── Reset & base ────────────────────────────────────── */
@@ -276,7 +276,7 @@ details.gp-details .gf-step-content { margin-top: 6px; }
 <div id="app">
   <div id="tree-pane">
     <div id="header">
-      <h1>BREAD — MCTS Tree</h1>
+      <h1>TRAS — MCTS Tree</h1>
       <span id="status" class="status-badge status-running">running</span>
       <span id="node-count"></span>
       <div class="path-toggles" id="path-toggles" style="display:none;">

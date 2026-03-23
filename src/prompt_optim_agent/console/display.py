@@ -1,4 +1,4 @@
-"""BreadConsole -- Rich-powered terminal output for BREAD experiments."""
+"""TRASConsole -- Rich-powered terminal output for prompt optimization."""
 
 from typing import Any
 
@@ -19,8 +19,8 @@ def _format_metric(metric: Any) -> str:
     return str(metric)
 
 
-class BreadConsole:
-    """Structured, colored console output for BREAD experiments."""
+class TRASConsole:
+    """Structured, colored console output for prompt optimization."""
 
     def __init__(self, enabled: bool = True):
         self._console = Console(highlight=False) if enabled else Console(quiet=True)
@@ -34,7 +34,7 @@ class BreadConsole:
         optim_model: str, iterations: int, depth_limit: int, expand_width: int,
     ) -> None:
         lines = [
-            f"[bold]BREAD[/bold] -- {task_name} / {search_algo}",
+            f"[bold]TRAS[/bold] -- {task_name} / {search_algo}",
             f"base_model: [cyan]{base_model}[/cyan]  optim_model: [cyan]{optim_model}[/cyan]",
             f"iterations: {iterations}  depth: {depth_limit}  expand: {expand_width}",
         ]

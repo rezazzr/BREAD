@@ -31,7 +31,7 @@ def get_pacific_time():
 def create_logger(
     logging_dir: str, name: str, log_mode: str = "train"
 ) -> logging.Logger:
-    """Create a file-only logger. Console output is handled by BreadConsole."""
+    """Create a file-only logger. Console output is handled by TRASConsole."""
     os.makedirs(logging_dir, exist_ok=True)
 
     name = f"{name}-{log_mode}"
@@ -39,7 +39,7 @@ def create_logger(
     num = len(glob(f"{log_path}*"))
     log_path = f"{log_path}-{num:03d}.log"
 
-    logger = logging.getLogger(f"bread.{name}.{num}")
+    logger = logging.getLogger(f"tras.{name}.{num}")
     logger.setLevel(logging.INFO)
     logger.propagate = False
 

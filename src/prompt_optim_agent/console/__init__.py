@@ -1,16 +1,16 @@
-"""Rich console output for BREAD CLI."""
+"""Rich console output for prompt optimization."""
 
-from .display import BreadConsole
+from .display import TRASConsole
 
-_instance: BreadConsole | None = None
+_instance: TRASConsole | None = None
 
 
 def init_console(enabled: bool = True) -> None:
     global _instance
-    _instance = BreadConsole(enabled=enabled)
+    _instance = TRASConsole(enabled=enabled)
 
 
-def get_console() -> BreadConsole:
+def get_console() -> TRASConsole:
     if _instance is None:
         init_console()
     return _instance
