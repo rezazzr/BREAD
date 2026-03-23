@@ -20,12 +20,12 @@ class BaseAgent:
         search_algo: str,
         print_log: bool,
         log_dir: str,
-        init_prompt: str,
-        task_setting: dict,
-        base_model_setting: dict,
-        optim_model_setting: dict,
-        search_setting: dict,
-        world_model_setting: dict,
+        init_prompt: str = "",
+        task_setting: dict = None,
+        base_model_setting: dict = None,
+        optim_model_setting: dict = None,
+        search_setting: dict = None,
+        world_model_setting: dict = None,
         tracker: MetricsTracker = None,
     ) -> None:
         """
@@ -48,11 +48,11 @@ class BaseAgent:
         self.init_prompt = init_prompt
         self.tracker = tracker or MetricsTracker()
 
-        self.task_setting = task_setting
-        self.base_model_setting = base_model_setting
-        self.optim_model_setting = optim_model_setting
-        self.search_setting = search_setting
-        self.world_model_setting = world_model_setting
+        self.task_setting = task_setting or {}
+        self.base_model_setting = base_model_setting or {}
+        self.optim_model_setting = optim_model_setting or {}
+        self.search_setting = search_setting or {}
+        self.world_model_setting = world_model_setting or {}
 
         self.task = get_task(task_name)(**task_setting)
 
@@ -70,15 +70,30 @@ class BaseAgent:
         # Initialize rich console
         init_console(enabled=print_log)
         console = get_console()
-        console.config_panel(
-            task_name=exp_task_label,
-            search_algo=self.search_algo_name,
-            base_model=base_model_setting.get("model_name", "?"),
-            optim_model=optim_model_setting.get("model_name", "?"),
-            iterations=search_setting.get("iteration_num", 0),
-            depth_limit=search_setting.get("depth_limit", 0),
-            expand_width=search_setting.get("expand_width", 0),
-        )
+        if self.search_algo_name == "ape":
+            total_candidates = (
+                world_model_setting.get("num_subsamples", 0)
+                * world_model_setting.get("num_prompts_per_subsample", 0)
+            )
+            console.config_panel(
+                task_name=exp_task_label,
+                search_algo=self.search_algo_name,
+                base_model=base_model_setting.get("model_name", "?"),
+                optim_model=optim_model_setting.get("model_name", "?"),
+                iterations=world_model_setting.get("num_subsamples", 0),
+                depth_limit=0,
+                expand_width=total_candidates,
+            )
+        else:
+            console.config_panel(
+                task_name=exp_task_label,
+                search_algo=self.search_algo_name,
+                base_model=base_model_setting.get("model_name", "?"),
+                optim_model=optim_model_setting.get("model_name", "?"),
+                iterations=search_setting.get("iteration_num", 0),
+                depth_limit=search_setting.get("depth_limit", 0),
+                expand_width=search_setting.get("expand_width", 0),
+            )
 
         self.base_model = get_language_model(base_model_setting["model_type"])(
             **base_model_setting

@@ -1,0 +1,63 @@
+###############################################################################
+#  B A S I C   S E T T I N G S
+###############################################################################
+task_name:                # (str)  filename in src/tasks/, e.g. cb | bigbench
+search_algo: ape          # ape (Automatic Prompt Engineer)
+print_log: true
+log_dir:                  # directory for log files
+
+###############################################################################
+#  T A S K   S P L I T S   &   D A T A
+###############################################################################
+task_setting:
+  train_size:             # (int | null) examples used for demo sampling
+  eval_size:              # (int)   held-out set for scoring candidates
+  test_size:              # (int)   final evaluation size (0 = skip)
+  seed:                   # (int)   dataset shuffle seed
+  data_dir:               # (str | null) path to custom dataset file
+  post_instruction: false # false = [PROMPT][QUESTION], true = [QUESTION][PROMPT]
+
+###############################################################################
+#  B A S E   M O D E L   (scores candidate prompts on eval/test sets)
+###############################################################################
+base_model_setting:
+  model_type:             # openai  (register new backends in language_model/__init__.py)
+  model_name:             # model id, e.g. gpt-4o
+  temperature: 0.0        # 0.0 for deterministic scoring
+  max_tokens:             # generation cut-off
+  api_key:
+  max_parallel_requests:
+
+###############################################################################
+#  O P T I M I S E R   M O D E L   (generates candidate instructions)
+###############################################################################
+optim_model_setting:
+  model_type:
+  model_name:
+  temperature: 1.0        # >0 for diverse candidate generation
+  max_tokens:
+  api_key:
+  max_parallel_requests:
+
+###############################################################################
+#  W O R L D   M O D E L   (APE generation & evaluation)
+###############################################################################
+world_model_setting:
+  # -- APE generation parameters --
+  num_subsamples: 10            # number of distinct generation queries (different demo subsets)
+  num_demos: 5                  # input-output examples per generation query
+  num_prompts_per_subsample: 5  # candidates generated per query (total = num_subsamples * this)
+  generation_mode: "forward"    # "forward" | "insert" | "insert_v2"
+
+  # -- Evaluation parameters --
+  eval_batch_size: 1
+  test_batch_size: 1
+
+###############################################################################
+#  W e i g h t s   &   B i a s e s   (optional; delete block to disable)
+###############################################################################
+wandb:
+  project:
+  group:
+  tags:                   # ["ape", "experiment-x", …]
+  name:                   # run name gets a timestamp suffix automatically

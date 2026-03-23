@@ -31,13 +31,42 @@ def _validate_model_setting(cfg: dict, label: str):
         _check(cfg.get("api_key") is not None, f"{label}.api_key is required for OpenAI models")
 
 
+def _validate_mcts_config(cfg):
+    """Validate MCTS-specific config fields."""
+    search = cfg["search_setting"]
+    for key in ("iteration_num", "expand_width", "depth_limit", "min_depth", "beam_width"):
+        _check_type(search, key, int, f"search_setting.{key}")
+    _check_type(search, "w_exp", float, "search_setting.w_exp")
+
+    wm = cfg["world_model_setting"]
+    _check_type(wm, "train_shuffle", bool, "world_model_setting.train_shuffle")
+    _check_type(wm, "num_new_prompts", int, "world_model_setting.num_new_prompts")
+    _check_type(wm, "train_batch_size", int, "world_model_setting.train_batch_size")
+
+
+def _validate_ape_config(cfg):
+    """Validate APE-specific config fields."""
+    wm = cfg["world_model_setting"]
+    _check_type(wm, "num_subsamples", int, "world_model_setting.num_subsamples")
+    _check_type(wm, "num_demos", int, "world_model_setting.num_demos")
+    _check_type(wm, "num_prompts_per_subsample", int, "world_model_setting.num_prompts_per_subsample")
+    _check_choice(
+        wm, "generation_mode",
+        ["forward", "insert", "insert_v2"],
+        "world_model_setting.generation_mode",
+    )
+
+
 def validate_config(cfg):
     # Basic settings
     _check(cfg["task_name"] is not None, "task_name must be specified")
-    _check_choice(cfg, "search_algo", ["mcts", "beam_search"], "search_algo")
+    _check_choice(cfg, "search_algo", ["mcts", "beam_search", "ape"], "search_algo")
     _check_type(cfg, "print_log", bool, "print_log")
     _check(cfg["log_dir"] is not None, "log_dir must be specified")
-    _check(cfg["init_prompt"] is not None, "init_prompt must be specified")
+
+    # init_prompt is required for MCTS but optional for APE
+    if cfg["search_algo"] != "ape":
+        _check(cfg["init_prompt"] is not None, "init_prompt must be specified")
 
     # Task setting
     task = cfg["task_setting"]
@@ -51,20 +80,22 @@ def validate_config(cfg):
     _validate_model_setting(cfg["base_model_setting"], "base_model_setting")
     _validate_model_setting(cfg["optim_model_setting"], "optim_model_setting")
 
-    # Search setting
-    search = cfg["search_setting"]
-    for key in ("iteration_num", "expand_width", "depth_limit", "min_depth", "beam_width"):
-        _check_type(search, key, int, f"search_setting.{key}")
-    _check_type(search, "w_exp", float, "search_setting.w_exp")
+    # Algorithm-specific validation
+    if cfg["search_algo"] == "ape":
+        _validate_ape_config(cfg)
+    else:
+        _validate_mcts_config(cfg)
 
-    # World model setting
-    wm = cfg["world_model_setting"]
-    _check_type(wm, "train_shuffle", bool, "world_model_setting.train_shuffle")
-    _check_type(wm, "num_new_prompts", int, "world_model_setting.num_new_prompts")
-    _check_type(wm, "train_batch_size", int, "world_model_setting.train_batch_size")
+
+def _ensure_defaults(cfg):
+    """Fill missing top-level blocks with empty defaults."""
+    cfg.setdefault("init_prompt", "")
+    cfg.setdefault("search_setting", {})
+    cfg.setdefault("world_model_setting", {})
 
 
 def main(args):
+    _ensure_defaults(args)
     wandb_config = args.pop("wandb", None)
     if os.environ.get("NO_WANDB"):
         wandb_config = None
@@ -85,5 +116,6 @@ def main(args):
 
 if __name__ == "__main__":
     args = add_arguments()
+    _ensure_defaults(args)
     validate_config(args)
     main(args)
