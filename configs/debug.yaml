@@ -1,0 +1,55 @@
+###############################################################################
+#  D E B U G   C O N F I G
+#  Uses the fake DebugModel — no API calls, runs the full MCTS pipeline
+#  instantly for testing console output, logging, plots, and metrics.
+#
+#  Run:  NO_WANDB=1 python src/main.py -c configs/debug.yaml
+###############################################################################
+
+task_name: cb
+search_algo: mcts
+print_log: true
+log_dir: ./logs/
+
+init_prompt: |
+  Determine the relationship between the premise and hypothesis.
+  Is it entailment, contradiction, or neutral?
+
+task_setting:
+  train_size: 10
+  eval_size: 10
+  test_size: 10
+  seed: 42
+  data_dir: null
+  post_instruction: true
+
+base_model_setting:
+  model_type: debug
+  model_name: debug-base
+  temperature: 0.0
+  max_tokens: 100
+  latency: 0.5            # seconds per call — slows run so you can watch the HTML tree grow
+
+optim_model_setting:
+  model_type: debug
+  model_name: debug-optim
+  temperature: 1.0
+  max_tokens: 200
+  latency: 0.5
+
+search_setting:
+  iteration_num: 3
+  expand_width: 3
+  depth_limit: 3
+  min_depth: 2
+  w_exp: 2.5
+  beam_width: 3
+
+world_model_setting:
+  train_shuffle: true
+  num_new_prompts: 1
+  train_batch_size: 5
+  eval_batch_size: 5
+  test_batch_size: 5
+  positive_reinforcement_depth: 100
+  gradient_sampling: 1

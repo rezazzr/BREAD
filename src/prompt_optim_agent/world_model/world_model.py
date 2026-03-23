@@ -3,6 +3,7 @@ from typing import List, Tuple
 import numpy as np
 from tqdm import tqdm
 
+from prompt_optim_agent.console import get_console
 from prompt_optim_agent.language_model.base_model import BaseLanguageModel
 from prompt_optim_agent.tracking import MetricsTracker
 from tasks.base_task import BaseTask
@@ -83,7 +84,7 @@ class WorldModel:
     def log_vars(self):
         """Log world_model arguments."""
         self.logger.info("----------------- World Model --------------------------")
-        ignored_print_vars = [
+        ignored_print_vars = {
             "task",
             "logger",
             "tracker",
@@ -92,19 +93,15 @@ class WorldModel:
             "test_dataloader",
             "eval_dataloader",
             "gradient_descent",
-        ]
-        vars_dict = vars(self)
-        for var_name in vars_dict:
-            if var_name in ignored_print_vars:
-                continue
-            var_value = vars_dict[var_name]
-            self.logger.info(f"{var_name} : {var_value}")
+        }
+        for var_name, var_value in vars(self).items():
+            if var_name not in ignored_print_vars:
+                self.logger.info(f"{var_name} : {var_value}")
 
     def _infinite_data_loader(self, data_loader):
         """Yield batches from dataloader indefinitely."""
         while True:
-            for batch in data_loader:
-                yield batch
+            yield from data_loader
 
     def get_train_batch(self):
         return next(self.train_data_iterator)
@@ -112,11 +109,9 @@ class WorldModel:
     def _get_trajectory_prompts(self, node: MCTSNode):
         """Collect the trajectory of prompts from the root node to the given node."""
         trajectory_prompts = []
-        temp_node = node
-        trajectory_prompts.append(temp_node.prompt)
-        while temp_node.parent is not None:
-            temp_node = temp_node.parent
-            trajectory_prompts.append(temp_node.prompt)
+        while node is not None:
+            trajectory_prompts.append(node.prompt)
+            node = node.parent
         return trajectory_prompts[::-1]
 
     def build_root(self, init_prompt):
@@ -129,16 +124,13 @@ class WorldModel:
 
     def step(self, node: MCTSNode, batch):
         """Generate new nodes based on the given node and batch of data."""
-        new_nodes, gradient_descent_output = self._gradient_descent_step(
-            node=node, batch=batch
-        )
-        return new_nodes, gradient_descent_output
+        return self._gradient_descent_step(node=node, batch=batch)
 
     def _gradient_descent_step(
         self, node: MCTSNode, batch
     ) -> Tuple[List[MCTSNode], dict]:
         trajectory_prompts = self._get_trajectory_prompts(node=node)
-        helper_data = dict(trajectory_prompts=trajectory_prompts)
+        helper_data = {"trajectory_prompts": trajectory_prompts}
 
         gradient_descent_output = self.gradient_descent(
             batch, node.prompt, helper_data, node.depth
@@ -151,15 +143,11 @@ class WorldModel:
             }
         )
 
-        new_nodes = []
-        for prompt in gradient_descent_output["optimized_prompts"]:
-            child_node = MCTSNode(
-                prompt=prompt,
-                action=gradient_descent_output["optimized_prompts"],
-                parent=node,
-            )
-            new_nodes.append(child_node)
-
+        optimized_prompts = gradient_descent_output["optimized_prompts"]
+        new_nodes = [
+            MCTSNode(prompt=prompt, action=optimized_prompts, parent=node)
+            for prompt in optimized_prompts
+        ]
         return new_nodes, gradient_descent_output
 
     def evaluate_child_node(self, node: MCTSNode):
@@ -176,11 +164,12 @@ class WorldModel:
             dataloader=self.eval_dataloader,
         )
 
-        correct = eval_output["correct"]
-        correct_np = np.array(correct)
+        correct_np = np.array(eval_output["correct"])
         acc = correct_np[correct_np > -1].mean()
-        evaluate_output = dict(metric=metric, correct=correct, acc=acc)
-        return evaluate_output
+
+        # Console: compact eval result
+        get_console().eval_result(prompt, metric)
+        return {"metric": metric, "correct": eval_output["correct"], "acc": acc}
 
     def test_prompt(self, prompt):
         """Test prompt on test_dataloader."""
@@ -206,9 +195,6 @@ class WorldModel:
             metric: task specific evaluation metric, e.g. Accuracy
             eval_output: the input question and predictions for each example
         """
-        build_forward_prompts_func = task.build_forward_prompts_completion
-        batch_forward_func = self.base_model.batch_forward_func
-
         all_questions = []
         all_labels = []
         all_preds = []
@@ -216,10 +202,9 @@ class WorldModel:
         all_responses = []
         eval_output = {}
 
-        pbar = tqdm(dataloader, leave=False)
-        for batch in pbar:
-            batch_prompts = build_forward_prompts_func(batch["question"], eval_prompt)
-            responses, logging_dict = batch_forward_func(batch_prompts)
+        for batch in tqdm(dataloader, leave=False):
+            batch_prompts = task.build_forward_prompts_completion(batch["question"], eval_prompt)
+            responses, logging_dict = self.base_model.batch_forward_func(batch_prompts)
             self.tracker.log(
                 {f"{key}_base_model": value for key, value in logging_dict.items()}
             )
@@ -252,7 +237,4 @@ class WorldModel:
         return metric, eval_output
 
     def _reward_type_helper(self, metric):
-        if isinstance(metric, tuple):
-            return metric[0]
-        else:
-            return metric
+        return metric[0] if isinstance(metric, tuple) else metric

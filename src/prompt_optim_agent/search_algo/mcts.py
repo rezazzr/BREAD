@@ -4,10 +4,12 @@
 import logging
 import os
 from copy import deepcopy
-from typing import List, Optional, Tuple
+from typing import Optional
 
 import numpy as np
 
+from ..console import get_console
+from ..html_report import HtmlTreeReport
 from ..tracking import MetricsTracker
 from ..utils import create_logger
 from ..world_model.world_model import WorldModel
@@ -57,27 +59,20 @@ class MCTS(SearchAlgo):
         self.depth_limit = depth_limit
         self.w_exp = w_exp
         self.iteration_num = iteration_num
-        self.min_depth = (
-            min_depth  # Apply early stop only when depth is larger than min_depth
-        )
+        self.min_depth = min_depth
 
         self.mcts_threshold = 0.0  # The highest reward node globally
         self.min_threshold = 0.0  # The root node's reward as a min threshold
 
-        # output
-        self.log_dir = log_dir if log_dir is not None else os.getcwd()
-        self.logger = (
-            logger
-            if logger is not None
-            else create_logger(self.log_dir, "mcts", log_mode="train")
-        )
+        self.log_dir = log_dir or os.getcwd()
+        self.logger = logger or create_logger(self.log_dir, "mcts", log_mode="train")
 
         self.k = 1  # top-k reward nodes
         self.trace_in_each_iter: list[list[MCTSNode]] = []
         self.root: Optional[MCTSNode] = None
         self.nodes: list[MCTSNode] = []
         self.optim_nodes: list[OptimNode] = []
-        self.optim_nodes_ids_only: list[int] = []
+        self.optim_nodes_ids: set[int] = set()
         self.base_optim_node_id = -1
         self.num_gradient_accumulation = kwargs.get("num_gradient_accumulation", 1)
         self.log = log
@@ -91,6 +86,7 @@ class MCTS(SearchAlgo):
             log_dir=self.log_dir,
         )
         self.reporter.log_vars(vars(self))
+        self.html_report = HtmlTreeReport(log_dir=self.log_dir)
 
     def get_optim_id(self) -> int:
         self.base_optim_node_id -= 1
@@ -100,8 +96,7 @@ class MCTS(SearchAlgo):
         return np.argmax(x)
 
     def increase_threshold(self, threshold):
-        if threshold > self.mcts_threshold:
-            self.mcts_threshold = threshold
+        self.mcts_threshold = max(self.mcts_threshold, threshold)
 
     def _is_terminal_with_depth_limit(self, node: MCTSNode):
         return node.depth >= self.depth_limit
@@ -124,14 +119,11 @@ class MCTS(SearchAlgo):
         )
 
     def _uct(self, node: MCTSNode) -> float:
-        if node.parent is None:
-            N_parent = 0
-        else:
-            N_parent = len(node.parent.cum_rewards)
-        return_value = node.Q + self.w_exp * np.sqrt(
-            np.log(N_parent + 1) / max(1, len(node.cum_rewards))
+        n_parent = 0 if node.parent is None else len(node.parent.cum_rewards)
+        uct = node.Q + self.w_exp * np.sqrt(
+            np.log(n_parent + 1) / max(1, len(node.cum_rewards))
         )
-        return return_value.item()
+        return uct.item()
 
     def _uct_select(self, node: MCTSNode) -> MCTSNode:
         return max(node.children or [], key=self._uct)
@@ -141,12 +133,12 @@ class MCTS(SearchAlgo):
         Selection:
             From root node, keep selecting child node based on UCT
         """
-
+        console = get_console()
         path = []
         while True:
             path.append(node)
             node.visited += 1
-            if len(node.children) == 0 or self.is_terminal_node(node):
+            if not node.children or self.is_terminal_node(node):
                 return path
 
             node = self._uct_select(node)
@@ -155,6 +147,10 @@ class MCTS(SearchAlgo):
                     f"Select node {node.id}: depth {node.depth}, "
                     f"reward: {node.reward:.4f} utc: {self._uct(node=node)}"
                 )
+                console.phase(
+                    "SELECT",
+                    f"node {node.id} (depth {node.depth}, reward {node.reward:.4f})",
+                )
 
     def _expand(self, node: MCTSNode):
         """
@@ -162,19 +158,22 @@ class MCTS(SearchAlgo):
             Sample batches of data and perform state transition on the given node.
             Generate new child nodes and calculate their temporary reward.
         """
-        if self.log:
-            self.logger.info("Expanding:")
         if self.is_terminal_node(node):
             node.is_terminal = True
             return
 
+        console = get_console()
         if self.log:
             self.logger.info(
                 f"Expanding: node: {node.id}, depth {node.depth}, reward: {node.reward:.4f}"
             )
+            console.phase(
+                "EXPAND",
+                f"node {node.id} (depth {node.depth}, reward {node.reward:.4f})",
+            )
 
         node.expand_times += 1
-        if node.id not in self.optim_nodes_ids_only:
+        if node.id not in self.optim_nodes_ids:
             self.optim_nodes.append(
                 OptimNode(
                     node_id=node.id,
@@ -185,7 +184,7 @@ class MCTS(SearchAlgo):
                     kind="node",
                 )
             )
-            self.optim_nodes_ids_only.append(node.id)
+            self.optim_nodes_ids.add(node.id)
 
         for _ in range(self.expand_width):
             batch = self.world_model.get_train_batch()
@@ -213,9 +212,10 @@ class MCTS(SearchAlgo):
                     for child in children
                 ]
             )
-            self.optim_nodes_ids_only.extend(
-                [child.id for child in children] + [optim_node_id]
+            self.optim_nodes_ids.update(
+                child.id for child in children
             )
+            self.optim_nodes_ids.add(optim_node_id)
 
             for child_node in children:
                 self.world_model.evaluate_child_node(node=child_node)
@@ -223,20 +223,29 @@ class MCTS(SearchAlgo):
 
             self.nodes.extend(children)
             node.children.extend(children)
+            self.html_report.update(self.nodes, self.optim_nodes)
 
         if self.log:
             for child in node.children:
                 self.logger.info(
                     f"child_node {child.id} (reward:{child.reward:.4f})"
                 )
+            # Console: compact children table
+            console.children_table(
+                [
+                    {"id": c.id, "depth": c.depth, "reward": c.reward}
+                    for c in node.children
+                ]
+            )
 
     def _simulate(self, path: list[MCTSNode]):
         """
         Simulation: simulate the last node in the selected path, stop if reaching terminal or early stop.
         """
-
+        console = get_console()
         if self.log:
             self.logger.info("Simulating:")
+            console.phase("SIMULATE")
         node = path[-1]
 
         while True:
@@ -248,6 +257,7 @@ class MCTS(SearchAlgo):
                         f"Early Stop: node {node.id}, reward: {node.reward}. "
                         f"MCTS threshold increases to {self.mcts_threshold}. Stop simulating.\n"
                     )
+                    console.early_stop(node.id, node.reward, self.mcts_threshold)
                 return
 
             self.increase_threshold(node.reward)
@@ -255,11 +265,11 @@ class MCTS(SearchAlgo):
             if self.is_terminal_node(node):
                 return
 
-            if len(node.children) == 0:
+            if not node.children:
                 self._expand(node)
 
             rewards = [child.reward for child in node.children]
-            if len(rewards) != 0:
+            if rewards:
                 node = node.children[self.simulate_choice(rewards)]
             else:
                 node.is_terminal = True
@@ -267,7 +277,7 @@ class MCTS(SearchAlgo):
             node.visited += 1
             path.append(node)
 
-    def _back_propagate(self, path: list[MCTSNode]) -> List[float]:
+    def _back_propagate(self, path: list[MCTSNode]) -> list[float]:
         """
         Back Propagation: Update the cumulated rewards of each node in the path.
         """
@@ -289,9 +299,18 @@ class MCTS(SearchAlgo):
 
         # Reverse to match the original path order (root to leaf)
         cum_rewards.reverse()
+
+        # Console: compact backprop summary
+        if self.log:
+            console = get_console()
+            console.backprop_summary(
+                path_ids=[n.id for n in path],
+                cum_rewards=cum_rewards,
+            )
+
         return cum_rewards
 
-    def iterate(self, node: MCTSNode) -> Tuple[list[MCTSNode], List[float]]:
+    def iterate(self, node: MCTSNode) -> tuple[list[MCTSNode], list[float]]:
         """
         MCTS iteration: Selection, Expansion, Simulation, Back-Propagation
         """
@@ -304,9 +323,13 @@ class MCTS(SearchAlgo):
         return path, cum_rewards
 
     def search(self, init_state: str):
+        console = get_console()
 
         self.root = self.world_model.build_root(init_state)
         self.nodes.append(self.root)
+        self.html_report.update(self.nodes, self.optim_nodes)
+
+        console.init_reward(self.root.reward)
 
         if self.min_threshold == 0:  # TODO: Experiment with this condition
             self.min_threshold = self.root.reward
@@ -319,9 +342,19 @@ class MCTS(SearchAlgo):
                 self.logger.info(
                     f"---------------------  iteration {i} ------------------------"
                 )
+            console.iteration_header(i, self.iteration_num)
 
             path, cum_rewards = self.iterate(self.root)
             self.trace_in_each_iter.append(deepcopy(path))
+
+            # Incremental reward plot
+            console.update_reward_plot(
+                iteration=i,
+                node_rewards=[n.reward for n in self.nodes],
+                best_reward=max(n.reward for n in self.nodes),
+                log_dir=self.log_dir,
+            )
+            self.html_report.update(self.nodes, self.optim_nodes)
 
         mcts_output = self.reporter.prepare_output(
             trace_in_each_iter=self.trace_in_each_iter,
@@ -330,12 +363,16 @@ class MCTS(SearchAlgo):
             k=self.k,
         )
         self.reporter.save_to_json(mcts_output=mcts_output)
+        self.html_report.update(
+            self.nodes,
+            self.optim_nodes,
+            status="complete",
+            selected_node_id=mcts_output["best_reward_path_selected_node"][0].id,
+            best_q_path=[n.id for n in mcts_output["best_q_path"]],
+            best_reward_path=[n.id for n in mcts_output["best_reward_path"]],
+        )
         return self.trace_in_each_iter, mcts_output
 
     def __call__(self, init_state: str, **kwargs):
-
         MCTSNode.reset_id()
-
-        iteration_paths, mcts_outputs = self.search(init_state)
-
-        return iteration_paths, mcts_outputs
+        return self.search(init_state)

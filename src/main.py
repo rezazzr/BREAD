@@ -1,3 +1,4 @@
+import os
 import time
 
 from yaml_config_override import add_arguments
@@ -7,24 +8,16 @@ from prompt_optim_agent.language_model import LANGUAGE_MODELS
 from prompt_optim_agent.tracking import MetricsTracker
 
 
-def config():
-    args = add_arguments()
-    return args
-
-
 def _check(condition: bool, message: str):
-    """Raise ValueError if condition is False."""
     if not condition:
         raise ValueError(message)
 
 
 def _check_type(cfg: dict, key: str, expected_type, label: str):
-    """Validate that cfg[key] is an instance of expected_type."""
     _check(isinstance(cfg[key], expected_type), f"{label} must be {expected_type.__name__}")
 
 
 def _check_choice(cfg: dict, key: str, choices: list, label: str):
-    """Validate that cfg[key] is one of the allowed choices."""
     _check(cfg[key] in choices, f"{label} must be one of {choices}")
 
 
@@ -73,19 +66,24 @@ def validate_config(cfg):
 
 def main(args):
     wandb_config = args.pop("wandb", None)
+    if os.environ.get("NO_WANDB"):
+        wandb_config = None
     if wandb_config is not None:
         wandb_config["name"] = wandb_config.get("name", "") + "-" + time.strftime("%Y-%m-%d-%H-%M-%S")
 
     tracker = MetricsTracker(wandb_config=wandb_config)
-    tracker.set_config(args)
 
     agent = BaseAgent(tracker=tracker, **args)
+
+    # Now that agent has created the log_dir, wire it into the tracker
+    tracker.set_log_dir(agent.log_dir)
+    tracker.set_config(args)
+
     agent.run()
     tracker.finish()
 
 
 if __name__ == "__main__":
-    args = config()
+    args = add_arguments()
     validate_config(args)
-    print(args)
     main(args)

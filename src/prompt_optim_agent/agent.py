@@ -1,9 +1,11 @@
 import os
 import time
 from datetime import timedelta
+from pathlib import Path
 
 from tasks import get_task
 
+from .console import get_console, init_console
 from .language_model import get_language_model
 from .search_algo import get_search_algo
 from .tracking import MetricsTracker
@@ -54,17 +56,29 @@ class BaseAgent:
 
         self.task = get_task(task_name)(**task_setting)
 
-        if task_setting["data_dir"] is not None and task_name == "bigbench":
-            task_name = (
-                task_name + "_" + task_setting["data_dir"].split("/")[-1].split(".")[-2]
-            )
+        exp_task_label = task_name
+        if task_name == "bigbench" and task_setting["data_dir"] is not None:
+            exp_task_label = f"{task_name}_{Path(task_setting['data_dir']).stem}"
 
-        exp_name = f'{get_pacific_time().strftime("%Y%m%d_%H%M%S")}-{task_name}-algo_{self.search_algo_name}'
+        exp_name = f'{get_pacific_time().strftime("%Y%m%d_%H%M%S")}-{exp_task_label}-algo_{self.search_algo_name}'
 
         self.log_dir = os.path.join(log_dir, exp_name)
-        self.logger = create_logger(self.log_dir, f"{exp_name}", log_mode="train")
+        self.logger = create_logger(self.log_dir, exp_name, log_mode="train")
         self.logger.info(exp_name)
         self.log_vars()
+
+        # Initialize rich console
+        init_console(enabled=print_log)
+        console = get_console()
+        console.config_panel(
+            task_name=exp_task_label,
+            search_algo=self.search_algo_name,
+            base_model=base_model_setting.get("model_name", "?"),
+            optim_model=optim_model_setting.get("model_name", "?"),
+            iterations=search_setting.get("iteration_num", 0),
+            depth_limit=search_setting.get("depth_limit", 0),
+            expand_width=search_setting.get("expand_width", 0),
+        )
 
         self.base_model = get_language_model(base_model_setting["model_type"])(
             **base_model_setting
@@ -98,18 +112,28 @@ class BaseAgent:
         start_time = time.time()
 
         states, result_dict = self.search_algo.search(init_state=self.init_prompt)
-        end_time = time.time()
-        exe_time = str(timedelta(seconds=end_time - start_time)).split(".")[0]
+        exe_time = str(timedelta(seconds=time.time() - start_time)).split(".")[0]
         self.tracker.log({"execution_time": exe_time})
         self.logger.info(f"\nDone! Execution time: {exe_time}")
+
+        # Console completion banner
+        console = get_console()
+        console.results_header()
+        if result_dict.get("best_reward_path_selected_node"):
+            best_node = result_dict["best_reward_path_selected_node"][0]
+            console.search_complete(
+                best_reward=best_node.reward,
+                best_prompt=best_node.prompt,
+                elapsed=exe_time,
+            )
+        else:
+            console.status(f"Execution time: {exe_time}")
+
         return states, result_dict
 
     def log_vars(self):
-        """Log arguments."""
-        ignored_print_vars = ["logger", "tracker"]
-        vars_dict = vars(self)
-        for var_name in vars_dict:
-            if var_name in ignored_print_vars:
-                continue
-            var_value = vars_dict[var_name]
-            self.logger.info(f"{var_name} : {var_value}")
+        """Log arguments to file."""
+        ignored_vars = {"logger", "tracker"}
+        for var_name, var_value in vars(self).items():
+            if var_name not in ignored_vars:
+                self.logger.info(f"{var_name} : {var_value}")
