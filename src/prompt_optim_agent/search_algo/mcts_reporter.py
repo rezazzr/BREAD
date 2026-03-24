@@ -61,10 +61,19 @@ class MCTSReporter:
 
         if evaluate:
             if eval_type == "test":
-                test_metric, eval_output = self.world_model.test_prompt(node.prompt)
+                test_metric, eval_output = self.world_model.test_prompt(
+                    node.prompt,
+                    tracker_context={"node_id": node.id, "depth": node.depth},
+                )
             else:
                 raise ValueError(f"eval_type {eval_type} is not supported.")
             node.test_metric = test_metric
+            self.tracker.log({
+                "phase": "test_summary",
+                "node_id": node.id,
+                "depth": node.depth,
+                "test_metric": test_metric,
+            })
         if log_metric:
             if isinstance(node.test_metric, tuple):
                 self.logger.info(f"   {eval_type} metric: {node.test_metric}")

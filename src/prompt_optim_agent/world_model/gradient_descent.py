@@ -54,6 +54,7 @@ class GradientDescent:
             "positive_reinforcement_depth", 1
         )
         self.gradient_sampling = kwargs.get("gradient_sampling", 1)
+        self._tracker_context: dict = {}
         assert (
             self.gradient_sampling % 1 == 0 and self.gradient_sampling >= 1
         ), "self.gradient_sampling must be an integer greater than or equal to 1."
@@ -77,10 +78,18 @@ class GradientDescent:
         self._build_forward_prompts_func = task.build_forward_prompts_completion
         self._batch_forward_func = self.base_model.batch_forward_func
 
+    def set_tracker_context(self, context: dict) -> None:
+        """Set context dict to merge into all subsequent tracker.log() calls."""
+        self._tracker_context = context
+
     def forward(self, batch, cur_prompt):
         batch_prompts = self._build_forward_prompts_func(batch["question"], cur_prompt)
         responses, logging_dict = self._batch_forward_func(batch_prompts)
-        self.tracker.log({f"{key}_base_model": value for key, value in logging_dict.items()})
+        self.tracker.log({
+            **self._tracker_context,
+            "phase": "forward",
+            **{f"{key}_base_model": value for key, value in logging_dict.items()},
+        })
 
         if self.logger is not None:
             for p, r in zip(batch_prompts, responses):
@@ -214,6 +223,7 @@ class GradientDescent:
         example_string,
         gradient_prompt_template,
         nb_gradient_samples: int = 1,
+        gradient_type: str = "negative",
     ):
         assert (
             nb_gradient_samples >= 1 and nb_gradient_samples % 1 == 0
@@ -231,14 +241,27 @@ class GradientDescent:
                 gradient_prompt_batch
             )
             gradient_summary_prompt = self._get_gradient_summary_prompt(gradient_batch)
-            gradient, _ = self.optim_model.generate(gradient_summary_prompt)
+            gradient, summary_logging_dict = self.optim_model.generate(gradient_summary_prompt)
 
             if self.print_log:
                 self.logger.info(gradient_summary_template.format(
                     prompt=gradient_summary_prompt, summary=gradient
                 ))
 
-        self.tracker.log({f"{key}_optim_model": value for key, value in logging_dict.items()})
+        self.tracker.log({
+            **self._tracker_context,
+            "phase": "gradient",
+            "gradient_type": gradient_type,
+            "gradient_samples": nb_gradient_samples,
+            **{f"{key}_optim_model": value for key, value in logging_dict.items()},
+        })
+        if nb_gradient_samples > 1:
+            self.tracker.log({
+                **self._tracker_context,
+                "phase": "gradient_summary",
+                "gradient_type": gradient_type,
+                **{f"{key}_optim_model": value for key, value in summary_logging_dict.items()},
+            })
 
         if self.print_log:
             self.logger.info(gradient_log_template.format(
@@ -280,7 +303,11 @@ class GradientDescent:
         )
 
         response, logging_dict = self.optim_model.generate(optimize_prompt)
-        self.tracker.log({f"{key}_optim_model": value for key, value in logging_dict.items()})
+        self.tracker.log({
+            **self._tracker_context,
+            "phase": "optimize",
+            **{f"{key}_optim_model": value for key, value in logging_dict.items()},
+        })
 
         optimized_prompt = self._clean_optim_response(response)
         if self.print_log:
@@ -330,6 +357,7 @@ class GradientDescent:
                 example_string=correct_string,
                 gradient_prompt_template=self.ascend_gradient_prompt_template,
                 nb_gradient_samples=self.gradient_sampling,
+                gradient_type="positive",
             )
         elif forward_output["acc"] == 0.0:
             optimize_prompt_template = self.optimize_prompt_template
@@ -355,6 +383,7 @@ class GradientDescent:
                     example_string=correct_string,
                     gradient_prompt_template=self.ascend_gradient_prompt_template,
                     nb_gradient_samples=self.gradient_sampling,
+                    gradient_type="positive",
                 )
 
         optimized_prompts = self.optimize(

@@ -337,7 +337,7 @@ class MCTS(SearchAlgo):
 
         self.trace_in_each_iter = []
         for i in range(self.iteration_num):
-            self.tracker.log({"iteration": i})
+            self.tracker.log({"phase": "iteration_start", "iteration": i})
             if self.log:
                 self.logger.info(
                     f"---------------------  iteration {i} ------------------------"
@@ -346,6 +346,13 @@ class MCTS(SearchAlgo):
 
             path, cum_rewards = self.iterate(self.root)
             self.trace_in_each_iter.append(deepcopy(path))
+            self.tracker.log({
+                "phase": "iteration_end",
+                "iteration": i,
+                "num_nodes": len(self.nodes),
+                "best_reward": max(n.reward for n in self.nodes),
+                "path_length": len(path),
+            })
 
             # Incremental reward plot
             console.update_reward_plot(

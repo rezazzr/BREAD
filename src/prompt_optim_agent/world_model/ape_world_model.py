@@ -226,25 +226,23 @@ class APEWorldModel:
     ):
         """
         Evaluate eval_prompt on the given dataloader.
-        Identical to WorldModel.eval_instruction_with_loader.
+        Returns:
+            metric: task specific evaluation metric, e.g. Accuracy
+            eval_output: the input question and predictions for each example
         """
+        tracker_context = tracker_context or {}
         all_questions = []
         all_labels = []
         all_preds = []
         all_prompts = []
         all_responses = []
         eval_output = {}
-        tracker_context = tracker_context or {}
 
-        for batch in tqdm(dataloader, leave=False):
+        for batch_idx, batch in enumerate(tqdm(dataloader, leave=False)):
             batch_prompts = task.build_forward_prompts_completion(
                 batch["question"], eval_prompt
             )
             responses, logging_dict = self.base_model.batch_forward_func(batch_prompts)
-            self.tracker.log({
-                **tracker_context,
-                **{f"{key}_base_model": value for key, value in logging_dict.items()},
-            })
             preds = task.batch_clean_responses(responses)
             batch_answers = batch.get("answer", None)
             labels = (
@@ -252,6 +250,20 @@ class APEWorldModel:
                 if batch_answers is not None
                 else None
             )
+            batch_correct = task.cal_correct(
+                preds=preds, questions=batch["question"], labels=labels,
+                prompt=eval_prompt, use_test_metrics=use_test_metrics,
+            )
+            batch_acc = task.cal_metric_from_cal_correct_output(batch_correct)
+            num_correct = sum(1 for c in batch_correct if c == 1)
+            self.tracker.log({
+                **tracker_context,
+                "batch_idx": batch_idx,
+                "num_correct": num_correct,
+                "num_total": len(preds),
+                "batch_acc": batch_acc,
+                **{f"{key}_base_model": value for key, value in logging_dict.items()},
+            })
             all_preds.extend(preds)
             if labels is not None:
                 all_labels.extend(labels)
