@@ -10,6 +10,7 @@ task_name: cb
 search_algo: ape
 print_log: true
 log_dir: ./logs/
+open_report: true
 
 ###############################################################################
 #  T A S K   S P L I T S   &   D A T A
@@ -30,7 +31,7 @@ base_model_setting:
   model_name: debug-base
   temperature: 0.0
   max_tokens: 100
-  latency: 0.0
+  latency: 0.3                    # seconds per call — slows eval so you can watch scores appear
 
 ###############################################################################
 #  O P T I M I S E R   M O D E L   (generates candidate instructions)
@@ -40,7 +41,7 @@ optim_model_setting:
   model_name: debug-optim
   temperature: 1.0
   max_tokens: 200
-  latency: 0.0
+  latency: 0.5                    # seconds per call — slows generation so you can watch candidates appear
 
 ###############################################################################
 #  W O R L D   M O D E L   (APE generation & evaluation)
