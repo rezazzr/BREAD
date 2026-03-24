@@ -1,11 +1,23 @@
 import os
+import shutil
+import socket
+import subprocess
+import threading
 import time
+from functools import partial
+from http.server import HTTPServer, SimpleHTTPRequestHandler
 
 from yaml_config_override import add_arguments
 
 from prompt_optim_agent import BaseAgent
 from prompt_optim_agent.language_model import LANGUAGE_MODELS
 from prompt_optim_agent.tracking import MetricsTracker
+
+REPORT_FILENAMES = {
+    "ape": "ape_report.html",
+    "mcts": "tree_report.html",
+    "beam_search": "tree_report.html",
+}
 
 
 def _check(condition: bool, message: str):
@@ -94,8 +106,37 @@ def _ensure_defaults(cfg):
     cfg.setdefault("world_model_setting", {})
 
 
+def _find_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("", 0))
+        return s.getsockname()[1]
+
+
+def _serve_report(log_dir: str, search_algo: str):
+    """Start a background HTTP server in log_dir and open the report in a browser."""
+    report_file = REPORT_FILENAMES.get(search_algo)
+    if report_file is None:
+        return
+
+    port = _find_free_port()
+    handler = partial(SimpleHTTPRequestHandler, directory=log_dir)
+    server = HTTPServer(("", port), handler)
+
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    url = f"http://localhost:{port}/{report_file}"
+    print(f"Report server running at {url}")
+    for cmd in ("xdg-open", "open"):
+        if shutil.which(cmd):
+            subprocess.Popen(
+                [cmd, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+            break
+
+
 def main(args):
-    _ensure_defaults(args)
+    open_report = args.pop("open_report", False)
     wandb_config = args.pop("wandb", None)
     if os.environ.get("NO_WANDB"):
         wandb_config = None
@@ -109,6 +150,9 @@ def main(args):
     # Now that agent has created the log_dir, wire it into the tracker
     tracker.set_log_dir(agent.log_dir)
     tracker.set_config(args)
+
+    if open_report:
+        _serve_report(agent.log_dir, agent.search_algo_name)
 
     agent.run()
     tracker.finish()
