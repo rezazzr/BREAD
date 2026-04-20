@@ -106,6 +106,7 @@ class APEReporter:
         scored_candidates: list[dict],
         best_node: MCTSNode,
         best_origin: dict,
+        best_eval_output: dict,
         all_nodes: list[MCTSNode],
         generation_logs: list[dict],
         timing: dict = None,
@@ -114,19 +115,8 @@ class APEReporter:
         console = get_console()
         timing = timing or {}
 
-        best_ctx = {
-            "phase": "best_candidate_eval",
-            **best_origin,
-        }
-
-        # Detailed eval of best candidate (re-eval to get full output for logging)
         self.logger.info("\n--- Best candidate detailed evaluation ---")
-        eval_metric, eval_output = self.world_model.eval_instruction_with_loader(
-            task=self.task,
-            eval_prompt=best_node.prompt,
-            dataloader=self.world_model.eval_dataloader,
-            tracker_context=best_ctx,
-        )
+        eval_output = best_eval_output
         self._log_eval_details("Eval set", best_node.prompt, eval_output)
 
         # Test evaluation

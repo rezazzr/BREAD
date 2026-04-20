@@ -157,6 +157,7 @@ class APE(SearchAlgo):
                 "acc": eval_result["acc"],
                 "origin": origin,
                 "node": node,
+                "eval_output": eval_result["eval_output"],
             })
 
             self.tracker.log({
@@ -185,23 +186,11 @@ class APE(SearchAlgo):
         scored_candidates.sort(key=lambda x: x["score"], reverse=True)
         self.reporter.log_candidate_scores(scored_candidates)
 
-        # ---- Phase 4: Select best ----
         best_entry = scored_candidates[0]
         best_node = best_entry["node"]
 
         self.logger.info(f"\nBest candidate: score={best_entry['score']:.4f}")
         self.logger.info(f"Prompt: {best_entry['prompt']}")
-
-        # ---- Prepare output ----
-        scored_for_output = [
-            {
-                "prompt": e["prompt"],
-                "score": e["score"],
-                "correct": e["correct"],
-                "origin": e["origin"],
-            }
-            for e in scored_candidates
-        ]
 
         timing = {
             "generation_time": round(gen_time, 3),
@@ -209,14 +198,14 @@ class APE(SearchAlgo):
         }
 
         result_dict = self.reporter.prepare_output(
-            scored_candidates=scored_for_output,
+            scored_candidates=scored_candidates,
             best_node=best_node,
             best_origin=best_entry["origin"],
+            best_eval_output=best_entry["eval_output"],
             all_nodes=self.nodes,
             generation_logs=generation_logs,
             timing=timing,
         )
         self.reporter.save_to_json(result_dict)
 
-        # APE has no iteration trace, return empty list for compatibility
         return [], result_dict
