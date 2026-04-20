@@ -1,0 +1,39 @@
+cff-version: 1.2.0
+message: "If you use TRAS in your research, please cite the paper below."
+title: "TRAS: Textual Regularization with Aggregated Signals"
+authors:
+  - family-names: Davari
+    given-names: MohammadReza
+    affiliation: "Concordia University; Mila – Quebec AI Institute; Microsoft"
+    email: mohammadreza.davari@concordia.ca
+  - family-names: Garg
+    given-names: Utkarsh
+    affiliation: "Microsoft"
+    email: utkarshgarg@microsoft.com
+  - family-names: Cai
+    given-names: Weixin
+    affiliation: "Microsoft"
+    email: weixincai@microsoft.com
+  - family-names: Belilovsky
+    given-names: Eugene
+    affiliation: "Concordia University; Mila – Quebec AI Institute"
+    email: eugene.belilovsky@concordia.ca
+repository-code: "https://github.com/rezazzr/TRAS"
+license: Apache-2.0
+
+preferred-citation:
+  type: conference-paper
+  title: "Stabilizing Black-Box Prompt Optimization with Textual Regularization and Signal Aggregation"
+  authors:
+    - family-names: Davari
+      given-names: MohammadReza
+    - family-names: Garg
+      given-names: Utkarsh
+    - family-names: Cai
+      given-names: Weixin
+    - family-names: Belilovsky
+      given-names: Eugene
+  year: 2026
+  conference:
+    name: "The 39th Canadian Conference on Artificial Intelligence (Canadian AI 2026)"
+  url: "https://github.com/rezazzr/TRAS"
