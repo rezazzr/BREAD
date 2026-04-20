@@ -20,6 +20,21 @@ Authors: MohammadReza Davari¹,²,³, Utkarsh Garg³, Weixin Cai³, Eugene Belil
 
 ---
 
+<p align="center">
+  <img src="assets/figure1_teaser.png" alt="TRAS teaser: error-only APO gets trapped in a local optimum while TRAS reaches the global optimum" width="820">
+</p>
+
+<p align="center"><em>
+Figure 1 — Error-only APO chases a noisy textual gradient and collapses into a
+local optimum, eroding instruction components along the way. TRAS pairs the
+gradient with a <strong>textual regularizer</strong> from successful predictions
+and aggregates both via <strong>MCSA</strong> (K Monte Carlo samples), producing
+a steadier trajectory that preserves the initial prompt's structure and
+converges on the global optimum.
+</em></p>
+
+---
+
 ## Quick start (≈ 1 minute, no API key)
 
 ```bash
