@@ -1,6 +1,7 @@
+from .ape import APE
 from .mcts import MCTS
 
-SEARCH_ALGOS = {"mcts": MCTS}
+SEARCH_ALGOS = {"mcts": MCTS, "ape": APE}
 
 
 def get_search_algo(algo_name):
@@ -12,4 +13,4 @@ def get_search_algo(algo_name):
     return SEARCH_ALGOS[algo_name]
 
 
-__all__ = ["get_search_algo", "MCTS"]
+__all__ = ["get_search_algo", "MCTS", "APE"]

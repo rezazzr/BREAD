@@ -68,6 +68,10 @@ class DebugModel(BaseLanguageModel):
     def _route(self, prompt: str) -> str:
         lower = prompt.lower()
 
+        # APE candidate generation (forward / insert mode)
+        if "the instruction was" in lower or "instructed my friend" in lower:
+            return self._ape_generation_response(prompt)
+
         # Optimize prompt — asks for <START>...<END> wrapped output
         if "<start>" in lower and "<end>" in lower:
             return self._optimize_response()
@@ -101,6 +105,29 @@ class DebugModel(BaseLanguageModel):
             f"After careful analysis, I believe the answer is {choice}.\n"
             f"<answer>{choice}</answer>"
         )
+
+    _APE_CANDIDATES = [
+        "Analyze the given input carefully. Consider all possible interpretations before providing your answer.",
+        "Read the input thoroughly and determine the correct answer based on the evidence provided.",
+        "Examine the input step by step. Identify key details that support your conclusion.",
+        "Given the input below, apply careful reasoning to arrive at the most accurate answer.",
+        "Study the provided information. Focus on the core relationship between the key elements.",
+        "Review the input and evaluate each option systematically before choosing your answer.",
+        "Consider all aspects of the given input. Use logical reasoning to determine the best response.",
+        "Carefully interpret the information presented. Pay attention to subtle differences in meaning.",
+        "Analyze the given problem by breaking it into components. Address each part methodically.",
+        "Read the input with attention to detail. Consider the context and implications before answering.",
+        "Process the information step by step. Identify the critical factors that determine the answer.",
+        "Evaluate the given input using both context clues and logical deduction to form your response.",
+        "Think about what the input is really asking. Provide a precise and well-supported answer.",
+        "Look at the input from multiple angles. Weigh the evidence before committing to an answer.",
+        "Break down the input into its essential parts. Use each part to build toward your final answer.",
+    ]
+
+    def _ape_generation_response(self, prompt: str) -> str:
+        h = int(hashlib.md5(prompt.encode()).hexdigest(), 16)
+        idx = (h + self._call_count) % len(self._APE_CANDIDATES)
+        return self._APE_CANDIDATES[idx]
 
     def _gradient_response(self) -> str:
         n = self._call_count

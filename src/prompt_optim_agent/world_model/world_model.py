@@ -117,9 +117,14 @@ class WorldModel:
     def build_root(self, init_prompt):
         """Build root MCTSNode using the initial prompt."""
         node = MCTSNode(prompt=init_prompt, action=None, parent=None)
-        node.reward = self._reward_type_helper(
-            self.evaluate_prompt(prompt=node.prompt)["metric"]
-        )
+        ctx = {"phase": "init_eval", "node_id": node.id}
+        evaluate_output = self.evaluate_prompt(prompt=node.prompt, tracker_context=ctx)
+        node.reward = self._reward_type_helper(evaluate_output["metric"])
+        self.tracker.log({
+            "phase": "init_eval_summary",
+            "node_id": node.id,
+            "reward": node.reward,
+        })
         return node
 
     def step(self, node: MCTSNode, batch):
@@ -133,14 +138,8 @@ class WorldModel:
         helper_data = {"trajectory_prompts": trajectory_prompts}
 
         gradient_descent_output = self.gradient_descent(
-            batch, node.prompt, helper_data, node.depth
-        )
-        self.tracker.log(
-            {
-                "node_id": node.id,
-                "depth": node.depth,
-                "batch_acc": gradient_descent_output["acc"],
-            }
+            batch, node.prompt, helper_data, node.depth,
+            tracker_context={"node_id": node.id, "depth": node.depth},
         )
 
         optimized_prompts = gradient_descent_output["optimized_prompts"]
@@ -148,36 +147,59 @@ class WorldModel:
             MCTSNode(prompt=prompt, action=optimized_prompts, parent=node)
             for prompt in optimized_prompts
         ]
+        self.tracker.log({
+            "phase": "expansion_summary",
+            "node_id": node.id,
+            "depth": node.depth,
+            "batch_acc": gradient_descent_output["acc"],
+            "child_ids": [n.id for n in new_nodes],
+        })
         return new_nodes, gradient_descent_output
 
     def evaluate_child_node(self, node: MCTSNode):
         """Evaluate the given node on eval_dataloader to calculate the reward."""
-        evaluate_output = self.evaluate_prompt(prompt=node.prompt)
+        ctx = {"phase": "child_eval", "node_id": node.id, "depth": node.depth}
+        evaluate_output = self.evaluate_prompt(prompt=node.prompt, tracker_context=ctx)
         node.reward = self._reward_type_helper(evaluate_output["metric"])
+        self.tracker.log({
+            "phase": "child_eval_summary",
+            "node_id": node.id,
+            "depth": node.depth,
+            "reward": node.reward,
+        })
 
-    def evaluate_prompt(self, prompt):
+    def evaluate_prompt(self, prompt, tracker_context=None):
         """Evaluate prompt on eval_dataloader to calculate the reward."""
         self.logger.info(f"prompt: {prompt}")
         metric, eval_output = self.eval_instruction_with_loader(
             task=self.task,
             eval_prompt=prompt,
             dataloader=self.eval_dataloader,
+            tracker_context=tracker_context,
         )
 
         correct_np = np.array(eval_output["correct"])
         acc = correct_np[correct_np > -1].mean()
 
-        # Console: compact eval result
         get_console().eval_result(prompt, metric)
-        return {"metric": metric, "correct": eval_output["correct"], "acc": acc}
+        return {
+            "metric": metric,
+            "correct": eval_output["correct"],
+            "acc": acc,
+            "eval_output": eval_output,
+        }
 
-    def test_prompt(self, prompt):
+    def test_prompt(self, prompt, tracker_context=None):
         """Test prompt on test_dataloader."""
+        ctx = {"phase": "test"}
+        if tracker_context:
+            ctx.update(tracker_context)
         metric, eval_output = self.eval_instruction_with_loader(
             task=self.task,
             eval_prompt=prompt,
             dataloader=self.test_dataloader,
             use_test_metrics=True,
+            tracker_context=ctx,
         )
         return metric, eval_output
 
@@ -188,6 +210,7 @@ class WorldModel:
         dataloader,
         record_outputs: bool = True,
         use_test_metrics: bool = False,
+        tracker_context: dict = None,
     ):
         """
         Evaluate eval_prompt on the given dataloader.
@@ -195,28 +218,40 @@ class WorldModel:
             metric: task specific evaluation metric, e.g. Accuracy
             eval_output: the input question and predictions for each example
         """
-        all_questions = []
+        tracker_context = tracker_context or {}
         all_labels = []
         all_preds = []
+        all_correct = []
         all_prompts = []
         all_responses = []
         eval_output = {}
 
-        for batch in tqdm(dataloader, leave=False):
+        for batch_idx, batch in enumerate(tqdm(dataloader, leave=False)):
             batch_prompts = task.build_forward_prompts_completion(batch["question"], eval_prompt)
             responses, logging_dict = self.base_model.batch_forward_func(batch_prompts)
-            self.tracker.log(
-                {f"{key}_base_model": value for key, value in logging_dict.items()}
-            )
             preds = task.batch_clean_responses(responses)
             batch_answers = batch.get("answer", None)
             labels = (
                 task.clean_labels(batch_answers) if batch_answers is not None else None
             )
+            batch_correct = task.cal_correct(
+                preds=preds, questions=batch["question"], labels=labels,
+                prompt=eval_prompt, use_test_metrics=use_test_metrics,
+            )
+            batch_acc = task.cal_metric_from_cal_correct_output(batch_correct)
+            num_correct = sum(1 for c in batch_correct if c == 1)
+            self.tracker.log({
+                **tracker_context,
+                "batch_idx": batch_idx,
+                "num_correct": num_correct,
+                "num_total": len(preds),
+                "batch_acc": batch_acc,
+                **{f"{key}_base_model": value for key, value in logging_dict.items()},
+            })
             all_preds.extend(preds)
+            all_correct.extend(batch_correct)
             if labels is not None:
                 all_labels.extend(labels)
-            all_questions.extend(batch["question"])
             if record_outputs:
                 all_prompts.extend(batch_prompts)
                 all_responses.extend(responses)
@@ -226,14 +261,8 @@ class WorldModel:
             eval_output["model_responses"] = all_responses
             eval_output["preds"] = all_preds
             eval_output["labels"] = all_labels
-        eval_output["correct"] = task.cal_correct(
-            preds=all_preds,
-            questions=all_questions,
-            labels=all_labels,
-            prompt=eval_prompt,
-            use_test_metrics=use_test_metrics,
-        )
-        metric = task.cal_metric_from_cal_correct_output(eval_output["correct"])
+        eval_output["correct"] = all_correct
+        metric = task.cal_metric_from_cal_correct_output(all_correct)
         return metric, eval_output
 
     def _reward_type_helper(self, metric):

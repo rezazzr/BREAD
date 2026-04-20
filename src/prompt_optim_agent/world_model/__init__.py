@@ -1,7 +1,9 @@
+from .ape_world_model import APEWorldModel
 from .world_model import WorldModel
 
 WORLD_MODELS = {
     "mcts": WorldModel,
+    "ape": APEWorldModel,
 }
 
 
@@ -14,4 +16,4 @@ def get_world_model(world_model_name):
     return WORLD_MODELS[world_model_name]
 
 
-__all__ = ["get_world_model", "WorldModel"]
+__all__ = ["get_world_model", "WorldModel", "APEWorldModel"]
