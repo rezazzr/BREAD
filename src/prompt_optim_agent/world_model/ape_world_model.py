@@ -1,10 +1,5 @@
 import random
-from typing import List
 
-import numpy as np
-from tqdm import tqdm
-
-from prompt_optim_agent.console import get_console
 from prompt_optim_agent.language_model.base_model import BaseLanguageModel
 from prompt_optim_agent.tracking import MetricsTracker
 from tasks.base_task import BaseTask
@@ -16,6 +11,7 @@ from .prompts.ape_prompts import (
     insert_generation_template,
     insert_generation_template_v2,
 )
+from .world_model import WorldModel
 
 
 GENERATION_TEMPLATES = {
@@ -25,13 +21,18 @@ GENERATION_TEMPLATES = {
 }
 
 
-class APEWorldModel:
+class APEWorldModel(WorldModel):
     """
     World model for APE (Automatic Prompt Engineer).
 
     Handles:
     - Generating candidate instructions from training demonstrations
     - Evaluating candidate prompts on eval/test sets
+
+    Inherits eval_instruction_with_loader, evaluate_prompt, test_prompt, and
+    _reward_type_helper from WorldModel. APE has no gradient_descent step and
+    no train_dataloader, so __init__ skips super().__init__() and sets up only
+    the minimal state the inherited eval methods need.
     """
 
     def __init__(
@@ -50,6 +51,12 @@ class APEWorldModel:
         tracker: MetricsTracker = None,
         **kwargs,
     ):
+        if generation_mode not in GENERATION_TEMPLATES:
+            raise ValueError(
+                f"generation_mode must be one of {list(GENERATION_TEMPLATES.keys())}, "
+                f"got '{generation_mode}'"
+            )
+
         self.task = task
         self.logger = logger
         self.base_model = base_model
@@ -60,12 +67,6 @@ class APEWorldModel:
         self.num_demos = num_demos
         self.num_prompts_per_subsample = num_prompts_per_subsample
         self.generation_mode = generation_mode
-
-        if generation_mode not in GENERATION_TEMPLATES:
-            raise ValueError(
-                f"generation_mode must be one of {list(GENERATION_TEMPLATES.keys())}, "
-                f"got '{generation_mode}'"
-            )
         self.generation_template = GENERATION_TEMPLATES[generation_mode]
         self.demo_fmt = (
             demo_template_qa if generation_mode == "insert_v2" else demo_template
@@ -77,7 +78,6 @@ class APEWorldModel:
         self.test_dataloader = self.task.get_dataloader(
             "test", batch_size=test_batch_size, shuffle=False
         )
-
         self.train_data = self.task.dataset["train"]
 
         self.log_vars()
@@ -92,10 +92,6 @@ class APEWorldModel:
             f"total candidates (before dedup): "
             f"{self.num_subsamples * self.num_prompts_per_subsample}"
         )
-
-    # ------------------------------------------------------------------
-    # Candidate generation
-    # ------------------------------------------------------------------
 
     def _sample_demos(self) -> str:
         """Sample num_demos random examples from training data and format them."""
@@ -112,11 +108,9 @@ class APEWorldModel:
         """Build a generation query from formatted demos."""
         if self.generation_mode == "forward":
             return self.generation_template.format(demos=demos_str)
-        else:
-            # Insert modes — the LLM fills in the blank
-            return self.generation_template.format(
-                instruction_placeholder="[INSERT]", demos=demos_str
-            )
+        return self.generation_template.format(
+            instruction_placeholder="[INSERT]", demos=demos_str
+        )
 
     def generate_candidates(self) -> tuple[list[dict], list[dict]]:
         """
@@ -136,7 +130,6 @@ class APEWorldModel:
             self.logger.info(f"--- Generation query {i+1}/{self.num_subsamples} ---")
             self.logger.info(f"Query:\n{query}")
 
-            # Generate multiple candidates from the same query
             candidates_from_query = []
             for j in range(self.num_prompts_per_subsample):
                 response, logging_dict = self.optim_model.generate(query)
@@ -154,14 +147,12 @@ class APEWorldModel:
                         "origin": {"query_idx": i, "candidate_idx_in_query": j},
                     })
 
-            generation_logs.append(
-                {
-                    "query_idx": i,
-                    "query": query,
-                    "demos": demos_str,
-                    "candidates": candidates_from_query,
-                }
-            )
+            generation_logs.append({
+                "query_idx": i,
+                "query": query,
+                "demos": demos_str,
+                "candidates": candidates_from_query,
+            })
 
             self.logger.info(
                 f"Generated {len(candidates_from_query)} candidates from query {i+1}"
@@ -180,112 +171,11 @@ class APEWorldModel:
                 unique.append(c)
         return unique
 
-    # ------------------------------------------------------------------
-    # Evaluation
-    # ------------------------------------------------------------------
-
-    def evaluate_prompt(self, prompt: str, candidate_idx: int = -1, origin: dict = None) -> dict:
-        """Evaluate a prompt on the eval set."""
+    def evaluate_prompt(self, prompt, candidate_idx: int = -1, origin: dict = None):
         ctx = {"phase": "evaluation", "eval_idx": candidate_idx}
         if origin:
             ctx.update(origin)
-        metric, eval_output = self.eval_instruction_with_loader(
-            task=self.task,
-            eval_prompt=prompt,
-            dataloader=self.eval_dataloader,
-            tracker_context=ctx,
-        )
-        correct_np = np.array(eval_output["correct"])
-        acc = correct_np[correct_np > -1].mean()
+        return super().evaluate_prompt(prompt, tracker_context=ctx)
 
-        get_console().eval_result(prompt, metric)
-        return {"metric": metric, "correct": eval_output["correct"], "acc": acc}
-
-    def test_prompt(self, prompt: str, origin: dict = None):
-        """Evaluate a prompt on the test set."""
-        ctx = {"phase": "test"}
-        if origin:
-            ctx.update(origin)
-        metric, eval_output = self.eval_instruction_with_loader(
-            task=self.task,
-            eval_prompt=prompt,
-            dataloader=self.test_dataloader,
-            use_test_metrics=True,
-            tracker_context=ctx,
-        )
-        return metric, eval_output
-
-    def eval_instruction_with_loader(
-        self,
-        task,
-        eval_prompt,
-        dataloader,
-        record_outputs: bool = True,
-        use_test_metrics: bool = False,
-        tracker_context: dict = None,
-    ):
-        """
-        Evaluate eval_prompt on the given dataloader.
-        Returns:
-            metric: task specific evaluation metric, e.g. Accuracy
-            eval_output: the input question and predictions for each example
-        """
-        tracker_context = tracker_context or {}
-        all_questions = []
-        all_labels = []
-        all_preds = []
-        all_prompts = []
-        all_responses = []
-        eval_output = {}
-
-        for batch_idx, batch in enumerate(tqdm(dataloader, leave=False)):
-            batch_prompts = task.build_forward_prompts_completion(
-                batch["question"], eval_prompt
-            )
-            responses, logging_dict = self.base_model.batch_forward_func(batch_prompts)
-            preds = task.batch_clean_responses(responses)
-            batch_answers = batch.get("answer", None)
-            labels = (
-                task.clean_labels(batch_answers)
-                if batch_answers is not None
-                else None
-            )
-            batch_correct = task.cal_correct(
-                preds=preds, questions=batch["question"], labels=labels,
-                prompt=eval_prompt, use_test_metrics=use_test_metrics,
-            )
-            batch_acc = task.cal_metric_from_cal_correct_output(batch_correct)
-            num_correct = sum(1 for c in batch_correct if c == 1)
-            self.tracker.log({
-                **tracker_context,
-                "batch_idx": batch_idx,
-                "num_correct": num_correct,
-                "num_total": len(preds),
-                "batch_acc": batch_acc,
-                **{f"{key}_base_model": value for key, value in logging_dict.items()},
-            })
-            all_preds.extend(preds)
-            if labels is not None:
-                all_labels.extend(labels)
-            all_questions.extend(batch["question"])
-            if record_outputs:
-                all_prompts.extend(batch_prompts)
-                all_responses.extend(responses)
-
-        if record_outputs:
-            eval_output["model_inputs"] = all_prompts
-            eval_output["model_responses"] = all_responses
-            eval_output["preds"] = all_preds
-            eval_output["labels"] = all_labels
-        eval_output["correct"] = task.cal_correct(
-            preds=all_preds,
-            questions=all_questions,
-            labels=all_labels,
-            prompt=eval_prompt,
-            use_test_metrics=use_test_metrics,
-        )
-        metric = task.cal_metric_from_cal_correct_output(eval_output["correct"])
-        return metric, eval_output
-
-    def _reward_type_helper(self, metric):
-        return metric[0] if isinstance(metric, tuple) else metric
+    def test_prompt(self, prompt, origin: dict = None):
+        return super().test_prompt(prompt, tracker_context=origin)
