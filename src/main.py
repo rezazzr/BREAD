@@ -78,7 +78,11 @@ def _validate_ape_config(cfg):
 def validate_config(cfg):
     # Basic settings
     _check(cfg["task_name"] is not None, "task_name must be specified")
-    _check_choice(cfg, "search_algo", ["mcts", "beam_search", "ape"], "search_algo")
+    _check_choice(
+        cfg, "search_algo",
+        ["mcts", "tras", "beam_search", "ape"],
+        "search_algo",
+    )
     _check_type(cfg, "print_log", bool, "print_log")
     _check(cfg["log_dir"] is not None, "log_dir must be specified")
 

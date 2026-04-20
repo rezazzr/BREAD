@@ -3,6 +3,7 @@ from .world_model import WorldModel
 
 WORLD_MODELS = {
     "mcts": WorldModel,
+    "tras": WorldModel,  # TRAS shares WorldModel with MCTS; TRAS differs via config (textual regularization + MCSA) not a new world model.
     "ape": APEWorldModel,
 }
 
