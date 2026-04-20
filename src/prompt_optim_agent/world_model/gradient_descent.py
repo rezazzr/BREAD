@@ -1,5 +1,39 @@
-# The code is modified based on Automatic Prompt Optimization with "Gradient Descent" and Beam Search
-# https://arxiv.org/abs/2305.03495
+"""Textual-gradient, textual-regularization, and MCSA signals for TRAS.
+
+This module implements the three update signals introduced by the TRAS
+paper (Davari et al., *Stabilizing Black-Box Prompt Optimization with
+Textual Regularization and Signal Aggregation*, Canadian AI 2026;
+https://github.com/rezazzr/TRAS).
+
+Paper terminology → code identifier:
+
+  ================================  =====================================================
+  Paper                             Code
+  ================================  =====================================================
+  textual gradient (g_t)            :meth:`GradientDescent.cal_gradient` with
+                                    ``gradient_type="negative"``;
+                                    template: ``gradient_prompt_template``
+  textual regularization (r_t)      :meth:`GradientDescent.cal_gradient` with
+                                    ``gradient_type="positive"``;
+                                    templates prefixed ``ascend_*``
+                                    (historical name for the regularizer direction)
+  MCSA sample count (K)             ``self.gradient_sampling``
+                                    (YAML: ``world_model_setting.gradient_sampling``
+                                    or alias ``mcsa_samples``)
+  regularization warmup (tau)       ``self.positive_reinforcement_depth``
+                                    (YAML: ``world_model_setting.positive_reinforcement_depth``
+                                    or alias ``regularization_warmup_depth``)
+  ================================  =====================================================
+
+The ``ascend_*`` template names are kept for backward compatibility with
+earlier checkpoints and forks; treat them as *regularizer* templates
+(paper Section 3.3).
+
+Original corrective-gradient implementation is adapted from ProTeGi / APO
+(Pryzant et al., *Automatic Prompt Optimization with 'Gradient Descent' and
+Beam Search*, 2023; https://arxiv.org/abs/2305.03495). TRAS's textual
+regularizer and MCSA are the contributions of this work.
+"""
 
 import re
 from typing import Tuple
@@ -50,10 +84,16 @@ class GradientDescent:
         self.print_log = print_log if logger is not None else False
         self.num_new_prompts = num_new_prompts
         self.tracker = tracker or MetricsTracker()
+        # Paper-aligned names are preferred; legacy names remain supported
+        # so older configs keep working.
         self.positive_reinforcement_depth = kwargs.get(
-            "positive_reinforcement_depth", 1
+            "regularization_warmup_depth",        # paper: tau_warmup (Sec. 3.3)
+            kwargs.get("positive_reinforcement_depth", 1),  # legacy alias
         )
-        self.gradient_sampling = kwargs.get("gradient_sampling", 1)
+        self.gradient_sampling = kwargs.get(
+            "mcsa_samples",                       # paper: K (Sec. 3.4)
+            kwargs.get("gradient_sampling", 1),   # legacy alias
+        )
         self._tracker_context: dict = {}
         assert (
             self.gradient_sampling % 1 == 0 and self.gradient_sampling >= 1
@@ -221,6 +261,24 @@ class GradientDescent:
         nb_gradient_samples: int = 1,
         gradient_type: str = "negative",
     ):
+        """Compute a textual update signal (gradient or regularizer) for ``cur_prompt``.
+
+        This single entry point produces both TRAS inner-loop signals:
+
+        * ``gradient_type="negative"`` — **textual gradient** (paper Section 3.2):
+          a corrective signal derived from incorrect predictions
+          (``example_string`` = error examples). Used with
+          ``gradient_prompt_template``.
+        * ``gradient_type="positive"`` — **textual regularization** (Section 3.3):
+          a preservation signal derived from correct predictions
+          (``example_string`` = success examples). Used with the paper's
+          ``ascend_gradient_prompt_template`` (kept for backward compat).
+
+        When ``nb_gradient_samples > 1``, the method implements **MCSA**
+        (Section 3.4): it samples K i.i.d. candidate signals from
+        ``optim_model`` and aggregates them into a single directive via
+        ``summarization_prompt_template``.
+        """
         assert (
             nb_gradient_samples >= 1 and nb_gradient_samples % 1 == 0
         ), "nb_gradient_samples must be an integer greater than or equal to 1."
