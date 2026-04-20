@@ -137,13 +137,10 @@ class WorldModel:
         trajectory_prompts = self._get_trajectory_prompts(node=node)
         helper_data = {"trajectory_prompts": trajectory_prompts}
 
-        self.gradient_descent.set_tracker_context(
-            {"node_id": node.id, "depth": node.depth}
-        )
         gradient_descent_output = self.gradient_descent(
-            batch, node.prompt, helper_data, node.depth
+            batch, node.prompt, helper_data, node.depth,
+            tracker_context={"node_id": node.id, "depth": node.depth},
         )
-        self.gradient_descent.set_tracker_context({})
 
         optimized_prompts = gradient_descent_output["optimized_prompts"]
         new_nodes = [

@@ -78,10 +78,6 @@ class GradientDescent:
         self._build_forward_prompts_func = task.build_forward_prompts_completion
         self._batch_forward_func = self.base_model.batch_forward_func
 
-    def set_tracker_context(self, context: dict) -> None:
-        """Set context dict to merge into all subsequent tracker.log() calls."""
-        self._tracker_context = context
-
     def forward(self, batch, cur_prompt):
         batch_prompts = self._build_forward_prompts_func(batch["question"], cur_prompt)
         responses, logging_dict = self._batch_forward_func(batch_prompts)
@@ -421,7 +417,12 @@ class GradientDescent:
             f"<{tag}>\n{value}\n</{tag}>" for tag, value in tag_value_pairs
         ).strip()
 
-    def __call__(self, batch, cur_prompt: str, helper_data=None, depth=None):
-        return self.gradient_descent_step(
-            cur_prompt=cur_prompt, batch=batch, helper_data=helper_data, depth=depth
-        )
+    def __call__(self, batch, cur_prompt: str, helper_data=None, depth=None, tracker_context=None):
+        prev_context = self._tracker_context
+        self._tracker_context = tracker_context or {}
+        try:
+            return self.gradient_descent_step(
+                cur_prompt=cur_prompt, batch=batch, helper_data=helper_data, depth=depth
+            )
+        finally:
+            self._tracker_context = prev_context
