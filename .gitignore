@@ -8,5 +8,14 @@ visualization/*
 src/prompt_optim_agent/language_model/_local_*
 configs/all_configs/
 all_configs.zip
+# Personal YAML configs that may contain API keys — do not commit.
+configs/*.local.yaml
+configs/**/*.local.yaml
+configs/*.secret.yaml
+configs/**/*.secret.yaml
 
 paper/
+
+# Python / pytest caches
+.pytest_cache/
+**/.pytest_cache/
