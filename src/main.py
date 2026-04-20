@@ -1,6 +1,5 @@
 import os
 import shutil
-import socket
 import subprocess
 import threading
 import time
@@ -106,21 +105,16 @@ def _ensure_defaults(cfg):
     cfg.setdefault("world_model_setting", {})
 
 
-def _find_free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("", 0))
-        return s.getsockname()[1]
-
-
 def _serve_report(log_dir: str, search_algo: str):
-    """Start a background HTTP server in log_dir and open the report in a browser."""
+    """Start a background HTTP server in log_dir, open the report in a browser,
+    and return the server so the caller can shut it down."""
     report_file = REPORT_FILENAMES.get(search_algo)
     if report_file is None:
-        return
+        return None
 
-    port = _find_free_port()
     handler = partial(SimpleHTTPRequestHandler, directory=log_dir)
-    server = HTTPServer(("", port), handler)
+    server = HTTPServer(("", 0), handler)
+    port = server.server_address[1]
 
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -133,6 +127,7 @@ def _serve_report(log_dir: str, search_algo: str):
                 [cmd, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
             break
+    return server
 
 
 def main(args):
@@ -147,15 +142,18 @@ def main(args):
 
     agent = BaseAgent(tracker=tracker, **args)
 
-    # Now that agent has created the log_dir, wire it into the tracker
     tracker.set_log_dir(agent.log_dir)
     tracker.set_config(args)
 
-    if open_report:
-        _serve_report(agent.log_dir, agent.search_algo_name)
+    server = _serve_report(agent.log_dir, agent.search_algo_name) if open_report else None
 
-    agent.run()
-    tracker.finish()
+    try:
+        agent.run()
+        tracker.finish()
+    finally:
+        if server is not None:
+            server.shutdown()
+            server.server_close()
 
 
 if __name__ == "__main__":
