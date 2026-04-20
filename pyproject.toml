@@ -24,10 +24,16 @@ openai = "^1.84.0"
 datasets = "^3.6.0"
 joblib = "^1.5.1"
 scipy = "^1.15.3"
+rich = "^13.7.0"
 
 
 [tool.poetry.group.dev.dependencies]
 ipykernel = "^6.29.5"
+pytest = "^8.0.0"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
 
 [build-system]
 requires = ["poetry-core"]
