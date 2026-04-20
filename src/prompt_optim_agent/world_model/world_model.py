@@ -181,9 +181,13 @@ class WorldModel:
         correct_np = np.array(eval_output["correct"])
         acc = correct_np[correct_np > -1].mean()
 
-        # Console: compact eval result
         get_console().eval_result(prompt, metric)
-        return {"metric": metric, "correct": eval_output["correct"], "acc": acc}
+        return {
+            "metric": metric,
+            "correct": eval_output["correct"],
+            "acc": acc,
+            "eval_output": eval_output,
+        }
 
     def test_prompt(self, prompt, tracker_context=None):
         """Test prompt on test_dataloader."""
@@ -215,9 +219,9 @@ class WorldModel:
             eval_output: the input question and predictions for each example
         """
         tracker_context = tracker_context or {}
-        all_questions = []
         all_labels = []
         all_preds = []
+        all_correct = []
         all_prompts = []
         all_responses = []
         eval_output = {}
@@ -245,9 +249,9 @@ class WorldModel:
                 **{f"{key}_base_model": value for key, value in logging_dict.items()},
             })
             all_preds.extend(preds)
+            all_correct.extend(batch_correct)
             if labels is not None:
                 all_labels.extend(labels)
-            all_questions.extend(batch["question"])
             if record_outputs:
                 all_prompts.extend(batch_prompts)
                 all_responses.extend(responses)
@@ -257,14 +261,8 @@ class WorldModel:
             eval_output["model_responses"] = all_responses
             eval_output["preds"] = all_preds
             eval_output["labels"] = all_labels
-        eval_output["correct"] = task.cal_correct(
-            preds=all_preds,
-            questions=all_questions,
-            labels=all_labels,
-            prompt=eval_prompt,
-            use_test_metrics=use_test_metrics,
-        )
-        metric = task.cal_metric_from_cal_correct_output(eval_output["correct"])
+        eval_output["correct"] = all_correct
+        metric = task.cal_metric_from_cal_correct_output(all_correct)
         return metric, eval_output
 
     def _reward_type_helper(self, metric):
