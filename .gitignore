@@ -8,3 +8,5 @@ visualization/*
 src/prompt_optim_agent/language_model/_local_*
 configs/all_configs/
 all_configs.zip
+
+paper/
