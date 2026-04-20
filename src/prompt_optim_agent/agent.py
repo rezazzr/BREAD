@@ -1,3 +1,13 @@
+"""Top-level orchestration for TRAS / MCTS / APE runs.
+
+Defines :class:`BaseAgent`, which wires together the task adapter, the
+base / optim language models, the world model (:class:`WorldModel` or
+:class:`APEWorldModel`), and the search algorithm (:class:`TRAS`,
+:class:`MCTS`, or :class:`APE`) from a single YAML config.
+
+Repo: https://github.com/rezazzr/TRAS
+"""
+
 import os
 import time
 from datetime import timedelta

@@ -1,3 +1,16 @@
+"""CLI entry point for TRAS / MCTS / APE runs.
+
+Loads a YAML config, validates it, constructs a :class:`BaseAgent`, and
+runs the prompt-optimization pipeline. Optionally serves the live HTML
+report over HTTP when ``open_report: true`` is set in the config.
+
+See the repo README and ``docs/CONCEPTS.md`` for the paper ↔ code
+mapping, and the ``configs/apo/`` / ``configs/apm/`` directories for the
+ready-to-run configs that reproduce the paper's tables.
+
+Repo: https://github.com/rezazzr/TRAS
+"""
+
 import os
 import shutil
 import subprocess

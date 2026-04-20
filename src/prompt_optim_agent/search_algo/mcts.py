@@ -1,5 +1,17 @@
-# The MCTS algorithm code is adapted from Reasoning with Language Model is Planning with World Model
-# https://github.com/Ber666/llm-reasoners
+"""MCTS search backbone (the PromptAgent baseline in the TRAS paper).
+
+Implements the Monte Carlo Tree Search used as the search backbone for
+both the PromptAgent baseline (``search_algo: mcts``) and TRAS itself
+(``search_algo: tras`` — see :mod:`.tras`). TRAS is a configuration
+profile of this backbone that adds textual regularization and MCSA to
+the inner-loop update signal; the tree-search logic here is shared.
+
+Adapted from *Reasoning with Language Model is Planning with World
+Model* (Hao et al.); original implementation:
+https://github.com/Ber666/llm-reasoners
+
+Repo: https://github.com/rezazzr/TRAS
+"""
 
 import logging
 import os

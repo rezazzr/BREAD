@@ -1,3 +1,19 @@
+"""Shared world model for TRAS and the PromptAgent (MCTS) baseline.
+
+The world model wraps the black-box LLM and provides three operations
+used by the search algorithm: forward rollout (evaluate a prompt on a
+batch), reward computation (eval-set accuracy), and state transition
+(generate next prompt via :class:`GradientDescent`, which implements
+the textual gradient, textual regularizer, and MCSA signals from the
+TRAS paper).
+
+Both ``search_algo: mcts`` and ``search_algo: tras`` use this class;
+the difference lives in ``world_model_setting`` (regularization warmup
+and MCSA sample count). APE uses :class:`APEWorldModel` instead.
+
+Repo: https://github.com/rezazzr/TRAS
+"""
+
 from typing import List, Tuple
 
 import numpy as np
