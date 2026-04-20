@@ -39,7 +39,14 @@ def _validate_model_setting(cfg: dict, label: str):
     _check(cfg["model_name"] is not None, f"{label}.model_name must be specified")
     _check_type(cfg, "temperature", float, f"{label}.temperature")
     if cfg["model_type"] == "openai":
-        _check(cfg.get("api_key") is not None, f"{label}.api_key is required for OpenAI models")
+        # api_key may be null in the YAML; OpenAIModel will fall back to
+        # the OPENAI_API_KEY environment variable in that case.
+        has_key = cfg.get("api_key") is not None or os.environ.get("OPENAI_API_KEY")
+        _check(
+            has_key,
+            f"{label}.api_key is required for OpenAI models "
+            f"(or set OPENAI_API_KEY in the environment)",
+        )
 
 
 def _validate_mcts_config(cfg):

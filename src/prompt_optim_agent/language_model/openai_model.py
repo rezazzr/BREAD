@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 from typing import Dict, Tuple
 
@@ -22,8 +23,15 @@ class OpenAIModel(BaseLanguageModel):
     ):
         super().__init__(model_name, temperature, max_tokens, **kwargs)
 
+        # Fall back to OPENAI_API_KEY env var when the config leaves api_key null.
         if api_key is None:
-            raise ValueError(f"api_key error: {api_key}")
+            api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "OpenAI api_key is required. Set it in the YAML config under "
+                "<base|optim>_model_setting.api_key, or export OPENAI_API_KEY "
+                "in the environment."
+            )
         try:
             self.model = OpenAI(api_key=api_key)
         except Exception as e:
