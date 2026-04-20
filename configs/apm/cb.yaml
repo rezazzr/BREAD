@@ -1,0 +1,63 @@
+# Table 3: APM from GPT-3.5-turbo to GPT-4o, CB (CommitmentBank) task.
+# Paper Section 4.2. init_prompt = expert prompt from Appendix.
+
+task_name: cb
+search_algo: tras
+print_log: true
+log_dir: ./logs/
+
+init_prompt: |
+  What is the relationship between the following premise and the hypothesis?
+  Premise: As the storm raged outside, with thunder clapping and lightning illuminating the dark sky, Sarah felt a wave of panic wash over her. She could hear the wind howling, and every crash of thunder made her heart race faster. Despite being tucked away under her thick blankets, she couldn't shake the feeling of terror that gripped her. The flickering candle nearby offered little comfort as she lay wide awake, listening to the chaos around her.
+  Hypothesis: Sarah felt a strong fear of the storm.
+  Entailment: The hypothesis is entailed by the premise. Sarah's panic and terror at the storm directly imply that she felt a strong fear of it.
+  What is the relationship between the following premise and the hypothesis?
+  Options:
+  - Contradiction
+  - Neutral
+  - Entailment
+
+task_setting:
+  train_size: 100
+  eval_size: 25
+  test_size: 56
+  seed: 1909
+  data_dir: cb.py
+  post_instruction: false
+
+base_model_setting:
+  model_type: openai
+  model_name: gpt-4o
+  temperature: 0.0
+  max_tokens: 4096
+  api_key: null
+  device: null
+  model_path: null
+  max_parallel_requests: 5
+
+optim_model_setting:
+  model_type: openai
+  model_name: gpt-4o
+  temperature: 1.0
+  max_tokens: 4096
+  api_key: null
+  device: null
+  model_path: null
+  max_parallel_requests: 5
+
+search_setting:
+  iteration_num: 15
+  expand_width: 3
+  depth_limit: 8
+  min_depth: 2
+  w_exp: 2.5
+  beam_width: 3
+
+world_model_setting:
+  train_shuffle: true
+  num_new_prompts: 1
+  train_batch_size: 5
+  eval_batch_size: 5
+  test_batch_size: 5
+  regularization_warmup_depth: 0
+  mcsa_samples: 2

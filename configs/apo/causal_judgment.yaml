@@ -1,0 +1,58 @@
+# Table 2: Standard APO on GPT-3.5-turbo, Causal Judgment task.
+# Paper Section 4.1. Run:
+#   export OPENAI_API_KEY=sk-...
+#   poetry run python src/main.py -c configs/apo/causal_judgment.yaml
+
+task_name: bigbench
+search_algo: tras
+print_log: true
+log_dir: ./logs/
+
+# Paper Appendix "Task Prompts" — minimalist base prompt used as init.
+init_prompt: |
+  Answer questions about causal attribution
+
+task_setting:
+  train_size: 90
+  eval_size: 60
+  test_size: 100
+  seed: 1909
+  data_dir: ./datasets/causal_judgement.json
+  post_instruction: false
+
+base_model_setting:
+  model_type: openai
+  model_name: gpt-3.5-turbo
+  temperature: 0.0
+  max_tokens: 4096
+  api_key: null          # falls back to $OPENAI_API_KEY
+  device: null
+  model_path: null
+  max_parallel_requests: 5
+
+optim_model_setting:
+  model_type: openai
+  model_name: gpt-4o
+  temperature: 1.0
+  max_tokens: 4096
+  api_key: null
+  device: null
+  model_path: null
+  max_parallel_requests: 5
+
+search_setting:
+  iteration_num: 15
+  expand_width: 3
+  depth_limit: 8
+  min_depth: 2
+  w_exp: 2.5
+  beam_width: 3
+
+world_model_setting:
+  train_shuffle: true
+  num_new_prompts: 1
+  train_batch_size: 5
+  eval_batch_size: 5
+  test_batch_size: 5
+  regularization_warmup_depth: 3     # tau_warmup in the paper (Section 3.3)
+  mcsa_samples: 6                    # K in MCSA (Section 3.4)

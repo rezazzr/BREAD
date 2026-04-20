@@ -1,0 +1,62 @@
+# Table 3: APM from GPT-3.5-turbo to GPT-4o, Causal Judgment task.
+# Paper Section 4.2.
+#
+# APM differences vs APO:
+#   - init_prompt is the EXPERT prompt from GPT-3.5-turbo optimization
+#     (paper Appendix "expert prompts"), not a task-default base prompt.
+#   - base_model is gpt-4o (the target LLM).
+#   - regularization_warmup_depth = 0 (activate TR from iteration 0).
+#   - mcsa_samples = 2 (Section 4.2 rationale).
+
+task_name: bigbench
+search_algo: tras
+print_log: true
+log_dir: ./logs/
+
+init_prompt: |
+  Provide causal attributions in complex scenarios by guiding the model to thoroughly analyze the critical steps, individual intentions, and specific actions that lead to outcomes. Emphasize the importance of identifying and prioritizing the primary cause in each scenario, focusing on direct causes rather than incidental factors. Define clear criteria for evaluating factors and determining the primary cause, considering the combined impact of multiple factors working in conjunction. Instruct the model to weigh the influence of various factors and explicitly guide it on handling conflicting actions and scenarios involving multiple individuals. Ensure that the model carefully considers all significant actions, intentions, and sequences of events leading to the final outcome to accurately attribute causation. Provide explicit instructions for distinguishing between direct causes and incidental factors, prioritizing immediate actions that directly influence outcomes. Define specific criteria for evaluating factors and determining the primary cause, especially in scenarios involving multiple individuals. Emphasize the need to analyze critical steps and actions leading to outcomes in order to accurately attribute causation.
+
+task_setting:
+  train_size: 90
+  eval_size: 60
+  test_size: 100
+  seed: 1909
+  data_dir: ./datasets/causal_judgement.json
+  post_instruction: false
+
+base_model_setting:
+  model_type: openai
+  model_name: gpt-4o
+  temperature: 0.0
+  max_tokens: 4096
+  api_key: null
+  device: null
+  model_path: null
+  max_parallel_requests: 5
+
+optim_model_setting:
+  model_type: openai
+  model_name: gpt-4o
+  temperature: 1.0
+  max_tokens: 4096
+  api_key: null
+  device: null
+  model_path: null
+  max_parallel_requests: 5
+
+search_setting:
+  iteration_num: 15
+  expand_width: 3
+  depth_limit: 8
+  min_depth: 2
+  w_exp: 2.5
+  beam_width: 3
+
+world_model_setting:
+  train_shuffle: true
+  num_new_prompts: 1
+  train_batch_size: 5
+  eval_batch_size: 5
+  test_batch_size: 5
+  regularization_warmup_depth: 0     # activate TR from iter 0 (paper Sec. 3.6)
+  mcsa_samples: 2                    # smaller K at GPT-4o prices (paper Sec. 4.2)

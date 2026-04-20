@@ -1,0 +1,14 @@
+# Shared settings for Table 2 (Standard APO on GPT-3.5-turbo).
+#
+# This file is a documentation-only reference — config values below are
+# replicated inline in each apo/<task>.yaml since the YAML loader used
+# (yaml_config_override) does not support anchors/includes.
+#
+# Paper, Section 4.1:
+#   base model  : GPT-3.5-turbo
+#   optim model : GPT-4o (for prompt revision)
+#   iterations  : 15
+#   MCSA K      : 6
+#   tau warmup  : 3 (Causal Judgment / Geometric Shapes / Penguins)
+#                 4 (Biosses / CB)
+#   seeds       : 5 (vary task_setting.seed)

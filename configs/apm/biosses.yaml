@@ -1,0 +1,55 @@
+# Table 3: APM from GPT-3.5-turbo to GPT-4o, Biosses task.
+# Paper Section 4.2. init_prompt = expert prompt from Appendix.
+
+task_name: biosses
+search_algo: tras
+print_log: true
+log_dir: ./logs/
+
+init_prompt: |
+  Decide if these two sentences are (A) Not similar (B) Somewhat similar (C) Similar. Compare the specific regulatory mechanisms and molecular pathways mentioned in each sentence to determine their similarity, explicitly identifying the role of miRNA expression and binding, as well as the relevance of the molecular characteristics of GEFs and nucleotide-binding pockets in the context of the sentences. Analyze both the similarities and differences between the sentences, focusing on the nuances of the regulatory mechanisms and molecular pathways mentioned, and considering the implications for cancer types and cellular processes
+
+task_setting:
+  train_size: 40
+  eval_size: 20
+  test_size: 40
+  seed: 1909
+  data_dir: biosses.py
+  post_instruction: false
+
+base_model_setting:
+  model_type: openai
+  model_name: gpt-4o
+  temperature: 0.0
+  max_tokens: 4096
+  api_key: null
+  device: null
+  model_path: null
+  max_parallel_requests: 5
+
+optim_model_setting:
+  model_type: openai
+  model_name: gpt-4o
+  temperature: 1.0
+  max_tokens: 4096
+  api_key: null
+  device: null
+  model_path: null
+  max_parallel_requests: 5
+
+search_setting:
+  iteration_num: 15
+  expand_width: 3
+  depth_limit: 8
+  min_depth: 2
+  w_exp: 2.5
+  beam_width: 3
+
+world_model_setting:
+  train_shuffle: true
+  num_new_prompts: 1
+  train_batch_size: 5
+  eval_batch_size: 5
+  test_batch_size: 5
+  regularization_warmup_depth: 0
+  mcsa_samples: 2
